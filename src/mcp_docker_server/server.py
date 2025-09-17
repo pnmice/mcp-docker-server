@@ -1,11 +1,14 @@
 import json
 import logging
+import os
 import re
 import sys
 import time
 import traceback
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from enum import Enum
 from threading import Lock
 from typing import Any
 
@@ -50,6 +53,11 @@ _server_settings: ServerSettings
 _image_cache: dict[str, dict[str, Any]] = {}
 _image_cache_lock = Lock()
 _CACHE_SIZE_LIMIT = 1000  # Limit cache to prevent memory bloat
+
+# SSH Connection Management
+_FAILURE_THRESHOLD = 10  # Stop stats collection after this many failures
+_BATCH_SIZE = 5  # Process containers in batches to avoid SSH overload
+_RETRY_DELAYS = [0.5, 1.0, 2.0, 4.0, 8.0]  # Exponential backoff delays
 
 # Configure enhanced logging for real-time Docker output
 logger = logging.getLogger(__name__)
@@ -380,6 +388,11 @@ async def list_tools() -> list[types.Tool]:
             name="get_container_stats",
             description="Get container resource usage statistics (equivalent to 'docker stats')",
             inputSchema=GetContainerStatsInput.model_json_schema(),
+        ),
+        types.Tool(
+            name="get_connection_health",
+            description="Get SSH connection health and stats collection performance metrics",
+            inputSchema={"type": "object", "properties": {}},
         ),
     ]
 
@@ -1062,6 +1075,9 @@ def _handle_system_tools(name: str, arguments: dict[str, Any]) -> Any | None:
         stats_args = GetContainerStatsInput(**arguments)
         return _handle_get_container_stats(stats_args)
 
+    elif name == "get_connection_health":
+        return _handle_get_connection_health()
+
     return None
 
 
@@ -1221,6 +1237,83 @@ def _get_containers_for_stats(args: GetContainerStatsInput) -> list[Any]:
         return list(_docker.containers.list(all=args.all))
 
 
+@dataclass
+class ConnectionHealth:
+    """Track SSH connection health and failures."""
+
+    consecutive_failures: int = 0
+    last_failure_time: float = 0
+    circuit_breaker_open: bool = False
+    total_attempts: int = 0
+    total_successes: int = 0
+
+
+class StatsCollectionStrategy(Enum):
+    """Strategy for collecting container stats."""
+
+    PARALLEL = "parallel"  # Original parallel approach
+    BATCHED_SEQUENTIAL = "batched_sequential"  # SSH-friendly batched approach
+    SINGLE_SEQUENTIAL = "single_sequential"  # Fallback single container at a time
+
+
+# Global connection health tracker
+_connection_health = ConnectionHealth()
+_connection_health_lock = Lock()
+
+
+def _update_connection_health(success: bool) -> None:
+    """Update connection health metrics."""
+    global _connection_health
+    with _connection_health_lock:
+        _connection_health.total_attempts += 1
+
+        if success:
+            _connection_health.total_successes += 1
+            _connection_health.consecutive_failures = 0
+            _connection_health.circuit_breaker_open = False
+        else:
+            _connection_health.consecutive_failures += 1
+            _connection_health.last_failure_time = time.time()
+
+            # Open circuit breaker after too many consecutive failures
+            if _connection_health.consecutive_failures >= _FAILURE_THRESHOLD:
+                _connection_health.circuit_breaker_open = True
+                logger.warning(
+                    f"🚨 SSH connection circuit breaker opened after {_FAILURE_THRESHOLD} consecutive failures"
+                )
+
+
+def _should_skip_stats_collection() -> bool:
+    """Check if stats collection should be skipped due to connection issues."""
+    with _connection_health_lock:
+        if _connection_health.circuit_breaker_open:
+            # Check if enough time has passed to try again (60 seconds)
+            if time.time() - _connection_health.last_failure_time > 60:
+                logger.info("🔄 Attempting to close SSH connection circuit breaker")
+                _connection_health.circuit_breaker_open = False
+                _connection_health.consecutive_failures = 0
+                return False
+            return True
+        return False
+
+
+def _get_optimal_stats_strategy() -> StatsCollectionStrategy:
+    """Determine the best stats collection strategy based on connection health."""
+    with _connection_health_lock:
+        failure_rate = _connection_health.consecutive_failures / max(
+            _connection_health.total_attempts, 1
+        )
+
+        if _connection_health.circuit_breaker_open:
+            return StatsCollectionStrategy.SINGLE_SEQUENTIAL
+        elif failure_rate > 0.3 or _connection_health.consecutive_failures > 5:
+            return StatsCollectionStrategy.BATCHED_SEQUENTIAL
+        else:
+            return (
+                StatsCollectionStrategy.BATCHED_SEQUENTIAL
+            )  # Default to SSH-friendly approach
+
+
 def _create_error_stats_entry(container: Any, error: Exception) -> dict[str, Any]:
     """Create an error stats entry for a container that failed stats collection."""
     return {
@@ -1242,35 +1335,135 @@ def _create_error_stats_entry(container: Any, error: Exception) -> dict[str, Any
     }
 
 
+def _collect_single_container_stats_with_retry(
+    container: Any, max_retries: int = 3
+) -> dict[str, Any]:
+    """Collect stats for a single container with retry logic."""
+    last_exception = None
+
+    for attempt in range(max_retries):
+        try:
+            # Add small delay between retries to avoid overwhelming SSH
+            if attempt > 0:
+                delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
+                logger.debug(
+                    f"Retrying stats collection for {getattr(container, 'name', 'unknown')} after {delay}s delay"
+                )
+                time.sleep(delay)
+
+            # Get stats for this container (non-streaming)
+            stats = container.stats(stream=False)
+            _update_connection_health(True)
+            return _format_container_stats(container, stats)
+
+        except Exception as e:
+            last_exception = e
+            _update_connection_health(False)
+            logger.warning(
+                f"Attempt {attempt + 1}/{max_retries} failed for container {getattr(container, 'name', 'unknown')}: {e}"
+            )
+
+            # For SSH-related errors, break early to avoid further connection issues
+            if "Connect failed" in str(e) or "Unable to open channel" in str(e):
+                logger.info(
+                    f"SSH connection error detected, stopping retries for {getattr(container, 'name', 'unknown')}"
+                )
+                break
+
+    # All retries failed
+    return _create_error_stats_entry(
+        container, last_exception or Exception("Unknown error")
+    )
+
+
 def _collect_single_container_stats(container: Any) -> dict[str, Any]:
-    """Collect stats for a single container."""
-    try:
-        # Get stats for this container (non-streaming)
-        stats = container.stats(stream=False)
-        return _format_container_stats(container, stats)
-    except Exception as e:
-        logger.warning(
-            f"Failed to get stats for container {getattr(container, 'name', 'unknown')}: {e}"
-        )
-        return _create_error_stats_entry(container, e)
+    """Collect stats for a single container (legacy function for compatibility)."""
+    return _collect_single_container_stats_with_retry(container, max_retries=1)
 
 
-def _collect_container_stats_parallel(containers: list[Any]) -> list[dict[str, Any]]:
-    """Collect stats for containers in parallel using ThreadPoolExecutor."""
+def _collect_container_stats_batched_sequential(
+    containers: list[Any], batch_size: int = _BATCH_SIZE
+) -> list[dict[str, Any]]:
+    """Collect stats for containers in batches sequentially to avoid SSH connection overload."""
     if not containers:
         return []
 
     container_stats = []
-    max_workers = min(len(containers), 10)  # Limit concurrent requests
+    total_containers = len(containers)
 
     logger.info(
-        f"📊 Collecting stats for {len(containers)} containers using {max_workers} parallel workers"
+        f"📊 Collecting stats for {total_containers} containers using batched sequential approach (batch_size={batch_size})"
+    )
+
+    # Process containers in batches
+    for batch_start in range(0, total_containers, batch_size):
+        batch_end = min(batch_start + batch_size, total_containers)
+        batch = containers[batch_start:batch_end]
+
+        logger.debug(
+            f"Processing batch {batch_start//batch_size + 1}: containers {batch_start+1}-{batch_end} of {total_containers}"
+        )
+
+        # Check circuit breaker before each batch
+        if _should_skip_stats_collection():
+            logger.warning(
+                "🚨 Skipping remaining stats collection due to circuit breaker"
+            )
+            # Return error entries for remaining containers
+            for container in containers[batch_start:]:
+                container_stats.append(
+                    _create_error_stats_entry(
+                        container,
+                        Exception(
+                            "Stats collection circuit breaker is open due to SSH connection failures"
+                        ),
+                    )
+                )
+            break
+
+        # Process each container in the batch sequentially
+        for i, container in enumerate(batch):
+            # Add small delay between containers to avoid overwhelming SSH
+            if i > 0:
+                time.sleep(0.1)  # 100ms delay between containers
+
+            try:
+                result = _collect_single_container_stats_with_retry(
+                    container, max_retries=2
+                )
+                container_stats.append(result)
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error collecting stats for container {getattr(container, 'name', 'unknown')}: {e}"
+                )
+                container_stats.append(_create_error_stats_entry(container, e))
+
+        # Add delay between batches to allow SSH connections to stabilize
+        if batch_end < total_containers:
+            time.sleep(0.5)  # 500ms delay between batches
+
+    return container_stats
+
+
+def _collect_container_stats_parallel(containers: list[Any]) -> list[dict[str, Any]]:
+    """Collect stats for containers in parallel using ThreadPoolExecutor (legacy approach)."""
+    if not containers:
+        return []
+
+    container_stats = []
+    # Reduce max_workers to be more SSH-friendly
+    max_workers = min(len(containers), 3)  # Reduced from 10 to 3 for SSH compatibility
+
+    logger.info(
+        f"📊 Collecting stats for {len(containers)} containers using {max_workers} parallel workers (SSH-limited)"
     )
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all container stats collection tasks
         future_to_container = {
-            executor.submit(_collect_single_container_stats, container): container
+            executor.submit(
+                _collect_single_container_stats_with_retry, container, 2
+            ): container
             for container in containers
         }
 
@@ -1290,8 +1483,51 @@ def _collect_container_stats_parallel(containers: list[Any]) -> list[dict[str, A
 
 
 def _collect_container_stats(containers: list[Any]) -> list[dict[str, Any]]:
-    """Collect stats for each container in the list (now using parallel processing)."""
-    return _collect_container_stats_parallel(containers)
+    """Collect stats for each container using the optimal strategy based on connection health."""
+    if not containers:
+        return []
+
+    strategy = _get_optimal_stats_strategy()
+
+    logger.info(f"📊 Using stats collection strategy: {strategy.value}")
+
+    if strategy == StatsCollectionStrategy.PARALLEL:
+        return _collect_container_stats_parallel(containers)
+    elif strategy == StatsCollectionStrategy.BATCHED_SEQUENTIAL:
+        return _collect_container_stats_batched_sequential(containers)
+    elif strategy == StatsCollectionStrategy.SINGLE_SEQUENTIAL:
+        # Fallback: process one container at a time with longer delays
+        container_stats = []
+        for i, container in enumerate(containers):
+            if i > 0:
+                time.sleep(1.0)  # 1 second delay between containers in fallback mode
+
+            result = _collect_single_container_stats_with_retry(
+                container, max_retries=1
+            )
+            container_stats.append(result)
+
+            # Check circuit breaker after each container in fallback mode
+            if _should_skip_stats_collection():
+                logger.warning(
+                    "🚨 Stopping stats collection due to circuit breaker in fallback mode"
+                )
+                # Return error entries for remaining containers
+                for remaining_container in containers[i + 1 :]:
+                    container_stats.append(
+                        _create_error_stats_entry(
+                            remaining_container,
+                            Exception(
+                                "Stats collection stopped due to SSH connection failures"
+                            ),
+                        )
+                    )
+                break
+
+        return container_stats
+
+    # This should not be reached since all enum values are covered above
+    raise ValueError(f"Unknown stats collection strategy: {strategy}")
 
 
 def _handle_get_container_stats(args: GetContainerStatsInput) -> dict[str, Any]:
@@ -1350,6 +1586,111 @@ def _handle_get_container_stats(args: GetContainerStatsInput) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"❌ Error in get_container_stats: {e}")
         raise e
+
+
+def _handle_get_connection_health() -> dict[str, Any]:
+    """Handle get_connection_health operation to show SSH connection health metrics."""
+    with _connection_health_lock:
+        health = _connection_health
+
+        # Calculate success rate
+        success_rate = (
+            (health.total_successes / health.total_attempts * 100)
+            if health.total_attempts > 0
+            else 0
+        )
+
+        # Determine connection status
+        if health.circuit_breaker_open:
+            status = "circuit_breaker_open"
+            status_description = (
+                "SSH connection circuit breaker is open due to repeated failures"
+            )
+        elif health.consecutive_failures > 5:
+            status = "degraded"
+            status_description = (
+                f"Experiencing {health.consecutive_failures} consecutive failures"
+            )
+        elif health.consecutive_failures > 0:
+            status = "unstable"
+            status_description = (
+                f"Some failures detected ({health.consecutive_failures} consecutive)"
+            )
+        else:
+            status = "healthy"
+            status_description = "SSH connections are working normally"
+
+        # Get current strategy
+        strategy = _get_optimal_stats_strategy()
+
+        return {
+            "connection_health": {
+                "status": status,
+                "description": status_description,
+                "circuit_breaker_open": health.circuit_breaker_open,
+                "consecutive_failures": health.consecutive_failures,
+                "total_attempts": health.total_attempts,
+                "total_successes": health.total_successes,
+                "success_rate_percent": round(success_rate, 2),
+                "last_failure_time": health.last_failure_time,
+                "current_strategy": strategy.value,
+            },
+            "recommendations": _get_connection_recommendations(health, strategy),
+            "ssh_optimization": {
+                "multiplexing_enabled": os.environ.get("DOCKER_SSH_OPTS") is not None,
+                "batch_size": _BATCH_SIZE,
+                "failure_threshold": _FAILURE_THRESHOLD,
+                "retry_delays": _RETRY_DELAYS,
+            },
+        }
+
+
+def _get_connection_recommendations(
+    health: ConnectionHealth, strategy: StatsCollectionStrategy
+) -> list[str]:
+    """Generate recommendations based on connection health."""
+    recommendations = []
+
+    if health.circuit_breaker_open:
+        recommendations.append(
+            "Wait for circuit breaker to reset (60 seconds) before retrying stats collection"
+        )
+        recommendations.append(
+            "Check SSH server configuration and connection stability"
+        )
+
+    if health.consecutive_failures > 3:
+        recommendations.append(
+            "Consider increasing SSH server MaxSessions and MaxStartups limits"
+        )
+        recommendations.append("Verify network connectivity and SSH authentication")
+
+    if strategy == StatsCollectionStrategy.SINGLE_SEQUENTIAL:
+        recommendations.append("Currently using fallback mode due to connection issues")
+        recommendations.append(
+            "Consider enabling SSH multiplexing: ControlMaster=auto in ~/.ssh/config"
+        )
+
+    if (
+        health.total_attempts > 10
+        and (health.total_successes / health.total_attempts) < 0.8
+    ):
+        recommendations.append(
+            "Poor success rate detected - consider investigating SSH server logs"
+        )
+        recommendations.append(
+            "May need to reduce concurrent operations or increase timeouts"
+        )
+
+    if not os.environ.get("DOCKER_SSH_OPTS"):
+        recommendations.append(
+            "SSH multiplexing not detected - connection reuse may be limited"
+        )
+
+    if not recommendations:
+        recommendations.append("SSH connections are working well")
+
+    return recommendations
 
 
 def _collect_usage_data() -> (

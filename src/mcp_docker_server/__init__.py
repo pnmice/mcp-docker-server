@@ -138,8 +138,60 @@ def _ensure_ssh_host_key_trusted(docker_host: str) -> None:  # noqa: C901
         pass
 
 
+def _configure_ssh_multiplexing(docker_host: str) -> None:
+    """Configure SSH multiplexing for better connection reuse with Docker over SSH."""
+    if not docker_host or not docker_host.startswith("ssh://"):
+        return
+
+    try:
+        # Parse hostname from Docker host URL
+        parsed = urllib.parse.urlparse(docker_host)
+        hostname = parsed.hostname
+        if not hostname:
+            return
+
+        # Validate hostname to prevent command injection
+        import re
+
+        if not re.match(r"^[a-zA-Z0-9.-]+$", hostname):
+            return
+
+        # Create SSH control socket directory
+        ssh_dir = Path.home() / ".ssh"
+        control_dir = ssh_dir / "docker-mcp-control"
+        control_dir.mkdir(mode=0o700, exist_ok=True)
+
+        # Set SSH multiplexing environment variables for Docker
+        # This enables connection reuse and reduces SSH connection overhead
+        control_path = control_dir / f"docker-{hostname}-%r@%h:%p"
+
+        # Configure SSH options for Docker client
+        ssh_opts = [
+            "ControlMaster=auto",
+            f"ControlPath={control_path}",
+            "ControlPersist=60s",  # Keep connections alive for 60 seconds
+            "ServerAliveInterval=30",  # Send keepalive every 30 seconds
+            "ServerAliveCountMax=3",  # Allow 3 missed keepalives before disconnect
+            "Compression=yes",  # Enable compression to reduce bandwidth
+            "TCPKeepAlive=yes",  # Enable TCP keepalive
+        ]
+
+        # Set Docker SSH options environment variable
+        existing_ssh_opts = os.environ.get("DOCKER_SSH_OPTS", "")
+        if existing_ssh_opts:
+            # Append to existing options
+            os.environ["DOCKER_SSH_OPTS"] = f"{existing_ssh_opts} {' '.join(ssh_opts)}"
+        else:
+            os.environ["DOCKER_SSH_OPTS"] = " ".join(ssh_opts)
+
+    except Exception:  # nosec B110 - intentionally broad for SSH multiplexing setup
+        # If SSH multiplexing setup fails, continue without it
+        # This is an optimization and shouldn't block Docker client creation
+        pass
+
+
 def create_docker_client() -> docker.DockerClient:
-    """Create a Docker client with SSH config resolution."""
+    """Create a Docker client with SSH config resolution and optimizations."""
     docker_host = os.environ.get("DOCKER_HOST", "")
     resolved_host = resolve_ssh_config(docker_host)
 
@@ -147,13 +199,17 @@ def create_docker_client() -> docker.DockerClient:
     if resolved_host != docker_host:
         os.environ["DOCKER_HOST"] = resolved_host
 
-    # For SSH connections, ensure host key is trusted
+    # For SSH connections, configure optimizations
     if resolved_host and resolved_host.startswith("ssh://"):
         try:
+            # Configure SSH multiplexing for better connection reuse
+            _configure_ssh_multiplexing(resolved_host)
+
+            # Ensure host key is trusted
             _ensure_ssh_host_key_trusted(resolved_host)
-        except Exception:  # nosec B110 - intentionally broad for SSH host key setup
-            # Continue even if host key setup fails
-            # This is optional functionality and shouldn't block Docker client creation
+        except Exception:  # nosec B110 - intentionally broad for SSH setup
+            # Continue even if SSH optimization/setup fails
+            # These are optional functionality and shouldn't block Docker client creation
             pass
 
     return docker.from_env()

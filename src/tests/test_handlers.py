@@ -771,7 +771,7 @@ class TestSystemHandlers:
         assert pagination["total"] == 1
         assert pagination["returned"] == 1
         assert pagination["limit"] == 10  # default limit
-        assert pagination["offset"] == 0   # default offset
+        assert pagination["offset"] == 0  # default offset
         assert not pagination["has_more"]
 
         stats = result["containers"][0]
