@@ -19,12 +19,20 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.11.13-slim
 
+# Create a non-root user for security
+RUN groupadd --gid 1000 app && \
+    useradd --uid 1000 --gid app --shell /bin/bash --create-home app
+
 WORKDIR /app
- 
+
+# Copy virtual environment and change ownership to app user
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 
 # Ensure executables in the venv take precedence over system executables
 ENV PATH="/app/.venv/bin:$PATH"
+
+# Switch to non-root user
+USER app
 
 # when running the container, add --db-path and a bind mount to the host's db file
 ENTRYPOINT ["mcp-docker-server"]
