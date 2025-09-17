@@ -168,11 +168,10 @@ class TestContainerHandlers:
         mock_container.logs.assert_called_once_with(tail=100)
 
     def test_fetch_container_logs_with_grep_filter(
-        self, mock_docker_client: Mock
+        self, mock_docker_client: Mock, mock_container: Mock
     ) -> None:
         """Test container log fetching with grep filtering."""
-        # Create fresh mock container for this test
-        mock_container = Mock()
+        # Set up mock container with specific logs for this test
         mock_container.logs.return_value = b"INFO: Starting application\nERROR: Database connection failed\nINFO: Retrying connection\nERROR: Still failing\n"
         mock_docker_client.containers.get.return_value = mock_container
 

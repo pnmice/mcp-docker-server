@@ -5,6 +5,7 @@ import sys
 import time
 import traceback
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from typing import Any
 
@@ -1115,41 +1116,54 @@ def _calculate_cpu_percent(stats: dict[str, Any]) -> float:
 def _format_container_stats(container: Any, stats: dict[str, Any]) -> dict[str, Any]:
     """Format container stats similar to docker stats output."""
     try:
-        # Basic container info
-        container_id = container.short_id
-        container_name = container.name
+        # Basic container info - handle None values safely
+        container_id = getattr(container, "short_id", "unknown")
+        container_name = getattr(container, "name", "unknown")
+
+        # Validate stats is not None and is a dict
+        if not stats or not isinstance(stats, dict):
+            raise ValueError("Stats data is None or invalid")
 
         # CPU percentage
         cpu_percent = _calculate_cpu_percent(stats)
 
-        # Memory stats
-        memory_stats = stats.get("memory_stats", {})
-        memory_usage = memory_stats.get("usage", 0)
-        memory_limit = memory_stats.get("limit", 0)
+        # Memory stats - handle None values
+        memory_stats = stats.get("memory_stats") or {}
+        memory_usage = memory_stats.get("usage", 0) or 0
+        memory_limit = memory_stats.get("limit", 0) or 0
         memory_percent = (
             (memory_usage / memory_limit * 100) if memory_limit > 0 else 0.0
         )
 
-        # Network I/O
-        networks = stats.get("networks", {})
-        net_rx = sum(net.get("rx_bytes", 0) for net in networks.values())
-        net_tx = sum(net.get("tx_bytes", 0) for net in networks.values())
+        # Network I/O - handle None networks
+        networks = stats.get("networks") or {}
+        if isinstance(networks, dict):
+            net_rx = sum(
+                (net or {}).get("rx_bytes", 0) for net in networks.values() if net
+            )
+            net_tx = sum(
+                (net or {}).get("tx_bytes", 0) for net in networks.values() if net
+            )
+        else:
+            net_rx = net_tx = 0
 
-        # Block I/O
-        blkio_stats = stats.get("blkio_stats", {})
-        io_service_bytes = blkio_stats.get("io_service_bytes_recursive", [])
+        # Block I/O - handle None blkio_stats
+        blkio_stats = stats.get("blkio_stats") or {}
+        io_service_bytes = blkio_stats.get("io_service_bytes_recursive") or []
 
         block_read = 0
         block_write = 0
-        for io_stat in io_service_bytes:
-            if io_stat.get("op") == "Read":
-                block_read += io_stat.get("value", 0)
-            elif io_stat.get("op") == "Write":
-                block_write += io_stat.get("value", 0)
+        if isinstance(io_service_bytes, list):
+            for io_stat in io_service_bytes:
+                if io_stat and isinstance(io_stat, dict):
+                    if io_stat.get("op") == "Read":
+                        block_read += io_stat.get("value", 0) or 0
+                    elif io_stat.get("op") == "Write":
+                        block_write += io_stat.get("value", 0) or 0
 
-        # PIDs
-        pids_stats = stats.get("pids_stats", {})
-        pids = pids_stats.get("current", 0)
+        # PIDs - handle None pids_stats
+        pids_stats = stats.get("pids_stats") or {}
+        pids = pids_stats.get("current", 0) or 0
 
         return {
             "container_id": container_id,
@@ -1169,7 +1183,9 @@ def _format_container_stats(container: Any, stats: dict[str, Any]) -> dict[str, 
             "raw_stats": stats,  # Include raw stats for debugging/advanced use
         }
     except Exception as e:
-        logger.warning(f"Error formatting stats for container {container.name}: {e}")
+        logger.warning(
+            f"Error formatting stats for container {getattr(container, 'name', 'unknown')}: {e}"
+        )
         return {
             "container_id": getattr(container, "short_id", "unknown"),
             "name": getattr(container, "name", "unknown"),
@@ -1202,7 +1218,7 @@ def _get_containers_for_stats(args: GetContainerStatsInput) -> list[Any]:
                 logger.warning(f"Container {container_id} not found: {e}")
         return containers
     else:
-        # Get all containers (running or all based on args.all)
+        # Get containers based on args.all (default: only running containers)
         return list(_docker.containers.list(all=args.all))
 
 
@@ -1227,20 +1243,56 @@ def _create_error_stats_entry(container: Any, error: Exception) -> dict[str, Any
     }
 
 
-def _collect_container_stats(containers: list[Any]) -> list[dict[str, Any]]:
-    """Collect stats for each container in the list."""
+def _collect_single_container_stats(container: Any) -> dict[str, Any]:
+    """Collect stats for a single container."""
+    try:
+        # Get stats for this container (non-streaming)
+        stats = container.stats(stream=False)
+        return _format_container_stats(container, stats)
+    except Exception as e:
+        logger.warning(
+            f"Failed to get stats for container {getattr(container, 'name', 'unknown')}: {e}"
+        )
+        return _create_error_stats_entry(container, e)
+
+
+def _collect_container_stats_parallel(containers: list[Any]) -> list[dict[str, Any]]:
+    """Collect stats for containers in parallel using ThreadPoolExecutor."""
+    if not containers:
+        return []
+
     container_stats = []
-    for container in containers:
-        try:
-            # Get stats for this container (non-streaming)
-            stats = container.stats(stream=False)
-            formatted_stats = _format_container_stats(container, stats)
-            container_stats.append(formatted_stats)
-        except Exception as e:
-            logger.warning(f"Failed to get stats for container {container.name}: {e}")
-            # Add error entry
-            container_stats.append(_create_error_stats_entry(container, e))
+    max_workers = min(len(containers), 10)  # Limit concurrent requests
+
+    logger.info(
+        f"📊 Collecting stats for {len(containers)} containers using {max_workers} parallel workers"
+    )
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all container stats collection tasks
+        future_to_container = {
+            executor.submit(_collect_single_container_stats, container): container
+            for container in containers
+        }
+
+        # Collect results as they complete
+        for future in as_completed(future_to_container):
+            container = future_to_container[future]
+            try:
+                result = future.result()
+                container_stats.append(result)
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error collecting stats for container {getattr(container, 'name', 'unknown')}: {e}"
+                )
+                container_stats.append(_create_error_stats_entry(container, e))
+
     return container_stats
+
+
+def _collect_container_stats(containers: list[Any]) -> list[dict[str, Any]]:
+    """Collect stats for each container in the list (now using parallel processing)."""
+    return _collect_container_stats_parallel(containers)
 
 
 def _handle_get_container_stats(args: GetContainerStatsInput) -> list[dict[str, Any]]:
