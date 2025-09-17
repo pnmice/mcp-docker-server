@@ -53,8 +53,7 @@ jobs:
 
       - name: Run MyPy (type checking)
         run: |
-          mypy src/
-        continue-on-error: true  # Allow type checking to fail for now
+          mypy src/mcp_docker_server/
 
   test:
     name: Run Tests
