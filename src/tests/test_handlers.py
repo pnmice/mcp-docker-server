@@ -761,10 +761,20 @@ class TestSystemHandlers:
         result = _handle_system_tools("get_container_stats", {"all": False})
 
         assert result is not None
-        assert isinstance(result, list)
-        assert len(result) == 1
+        assert isinstance(result, dict)
+        assert "containers" in result
+        assert "pagination" in result
+        assert len(result["containers"]) == 1
 
-        stats = result[0]
+        # Check pagination metadata
+        pagination = result["pagination"]
+        assert pagination["total"] == 1
+        assert pagination["returned"] == 1
+        assert pagination["limit"] == 10  # default limit
+        assert pagination["offset"] == 0   # default offset
+        assert not pagination["has_more"]
+
+        stats = result["containers"][0]
         assert stats["container_id"] == "abc123456789"
         assert stats["name"] == "test_container"
         assert "cpu_percent" in stats
@@ -774,7 +784,7 @@ class TestSystemHandlers:
         assert "net_io" in stats
         assert "block_io" in stats
         assert stats["pids"] == "15"
-        assert "raw_stats" in stats
+        assert "raw_stats" not in stats  # raw_stats should be removed
 
         # Verify Docker client calls
         mock_docker_client.containers.list.assert_called_once_with(all=False)
@@ -828,11 +838,18 @@ class TestSystemHandlers:
         )
 
         assert result is not None
-        assert isinstance(result, list)
-        assert len(result) == 2
+        assert isinstance(result, dict)
+        assert "containers" in result
+        assert "pagination" in result
+        assert len(result["containers"]) == 2
+
+        # Check pagination metadata
+        pagination = result["pagination"]
+        assert pagination["total"] == 2
+        assert pagination["returned"] == 2
 
         # Check both containers are present
-        container_names = [stats["name"] for stats in result]
+        container_names = [stats["name"] for stats in result["containers"]]
         assert "container1" in container_names
         assert "container2" in container_names
 
@@ -868,8 +885,10 @@ class TestSystemHandlers:
         result = _handle_system_tools("get_container_stats", {"all": True})
 
         assert result is not None
-        assert isinstance(result, list)
-        assert len(result) == 2
+        assert isinstance(result, dict)
+        assert "containers" in result
+        assert "pagination" in result
+        assert len(result["containers"]) == 2
 
         # Verify Docker client calls
         mock_docker_client.containers.list.assert_called_once_with(all=True)
@@ -884,7 +903,10 @@ class TestSystemHandlers:
             "get_container_stats", {"containers": ["nonexistent"], "all": False}
         )
 
-        assert result == []  # Should return empty list when no containers found
+        # Should return dict with empty containers list when no containers found
+        assert isinstance(result, dict)
+        assert result["containers"] == []
+        assert result["pagination"]["total"] == 0
 
     def test_get_container_stats_empty_list(self, mock_docker_client: Mock) -> None:
         """Test handling when no containers are running."""
@@ -892,7 +914,9 @@ class TestSystemHandlers:
 
         result = _handle_system_tools("get_container_stats", {"all": False})
 
-        assert result == []
+        assert isinstance(result, dict)
+        assert result["containers"] == []
+        assert result["pagination"]["total"] == 0
 
     def test_get_container_stats_stats_error(self, mock_docker_client: Mock) -> None:
         """Test handling when stats collection fails for a container."""
@@ -906,10 +930,11 @@ class TestSystemHandlers:
         result = _handle_system_tools("get_container_stats", {"all": False})
 
         assert result is not None
-        assert len(result) == 1
-        assert result[0]["name"] == "error_container"
-        assert result[0]["cpu_percent"] == "N/A"
-        assert "error" in result[0]
+        assert isinstance(result, dict)
+        assert len(result["containers"]) == 1
+        assert result["containers"][0]["name"] == "error_container"
+        assert result["containers"][0]["cpu_percent"] == "N/A"
+        assert "error" in result["containers"][0]
 
     def test_get_container_stats_malformed_stats(
         self, mock_docker_client: Mock
@@ -928,9 +953,10 @@ class TestSystemHandlers:
         result = _handle_system_tools("get_container_stats", {"all": False})
 
         assert result is not None
-        assert len(result) == 1
+        assert isinstance(result, dict)
+        assert len(result["containers"]) == 1
 
-        stats = result[0]
+        stats = result["containers"][0]
         assert stats["name"] == "malformed_container"
         assert stats["cpu_percent"] == "0.00%"  # Should default to 0
         assert stats["memory_percent"] == "0.00%"

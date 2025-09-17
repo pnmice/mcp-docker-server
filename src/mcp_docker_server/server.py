@@ -1180,7 +1180,6 @@ def _format_container_stats(container: Any, stats: dict[str, Any]) -> dict[str, 
             "block_write": _format_bytes(block_write),
             "block_io": f"{_format_bytes(block_read)} / {_format_bytes(block_write)}",
             "pids": str(pids),
-            "raw_stats": stats,  # Include raw stats for debugging/advanced use
         }
     except Exception as e:
         logger.warning(
@@ -1295,26 +1294,58 @@ def _collect_container_stats(containers: list[Any]) -> list[dict[str, Any]]:
     return _collect_container_stats_parallel(containers)
 
 
-def _handle_get_container_stats(args: GetContainerStatsInput) -> list[dict[str, Any]]:
+def _handle_get_container_stats(args: GetContainerStatsInput) -> dict[str, Any]:
     """Handle get_container_stats operation to show container resource usage statistics."""
     start_time = time.time()
     logger.info(f"📊 Starting get_container_stats operation with args: {args}")
 
     try:
         # Get containers to collect stats for
-        containers = _get_containers_for_stats(args)
+        all_containers = _get_containers_for_stats(args)
+        total_containers = len(all_containers)
 
-        if not containers:
+        if not all_containers:
             logger.info("No containers found for stats collection")
-            return []
+            return {
+                "containers": [],
+                "pagination": {
+                    "total": 0,
+                    "returned": 0,
+                    "limit": args.limit,
+                    "offset": args.offset,
+                    "has_more": False,
+                },
+            }
 
-        # Collect stats for each container
-        container_stats = _collect_container_stats(containers)
+        # Apply pagination
+        start_idx = args.offset
+        end_idx = start_idx + args.limit
+        paginated_containers = all_containers[start_idx:end_idx]
+
+        logger.info(
+            f"📄 Pagination: total={total_containers}, offset={args.offset}, limit={args.limit}, "
+            f"processing={len(paginated_containers)} containers"
+        )
+
+        # Collect stats for paginated containers
+        container_stats = _collect_container_stats(paginated_containers)
+
+        # Calculate pagination metadata
+        has_more = end_idx < total_containers
 
         total_time = time.time() - start_time
         logger.info(f"🏁 Total get_container_stats operation took {total_time:.3f}s")
 
-        return container_stats
+        return {
+            "containers": container_stats,
+            "pagination": {
+                "total": total_containers,
+                "returned": len(container_stats),
+                "limit": args.limit,
+                "offset": args.offset,
+                "has_more": has_more,
+            },
+        }
 
     except Exception as e:
         logger.error(f"❌ Error in get_container_stats: {e}")
