@@ -1,6 +1,6 @@
 [project]
 name = "mcp-docker-server"
-version = "0.0.4"
+version = "0.0.5"
 description = "A Docker MCP Server"
 readme = "README.md"
 dependencies = [
