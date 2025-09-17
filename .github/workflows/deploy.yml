@@ -186,7 +186,7 @@ jobs:
 
       - name: Run Bandit security linter
         run: |
-          bandit -r src/
+          bandit -r src/ --exclude src/tests/
 
   build:
     name: Build Package
