@@ -1,0 +1,116 @@
+FROM python:3.11.13-slim AS dev
+
+WORKDIR /app
+
+# Install system dependencies and Rust (needed for taplo)
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust (needed for taplo)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# Install Node.js (latest LTS) - nodejs@latest
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
+    && apt-get install -y nodejs
+
+# Install uv (Python package manager) - uv@latest
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Install taplo (TOML formatter/linter) - taplo@latest
+RUN cargo install taplo-cli --locked
+
+# Copy project files
+COPY uv.lock pyproject.toml /app/
+COPY ./src /app/src
+COPY README.md LICENSE /app/
+
+# Install Python dependencies in development mode (with dev dependencies)  
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --dev
+
+# Install debugging dependencies for MCP Inspector
+RUN uv add --dev debugpy
+
+# 📚 MCP Inspector Setup for Debugging
+# Install MCP Inspector globally for easy access
+RUN npm install -g @modelcontextprotocol/inspector
+
+# Create MCP Inspector configuration
+RUN mkdir -p /app/inspector && \
+    echo '{"mcpServers": {"mcp-docker-server": {"type": "stdio", "command": "uv", "args": ["run", "mcp-docker-server"], "cwd": "/app"}}}' > /app/inspector/mcp-config.json
+
+# Create development scripts with enhanced MCP Inspector debugging
+RUN echo '#!/bin/bash\nuv run ruff check src/**/*.py --format' > /usr/local/bin/python-lint && \
+    echo '#!/bin/bash\nnpx --yes prettier --write --prose-wrap=always *.json *.md' > /usr/local/bin/prettier-format && \
+    echo '#!/bin/bash\nnpx --yes prettier --check *.json *.md' > /usr/local/bin/prettier-check && \
+    echo '#!/bin/bash\necho "🚀 Starting MCP Server with enhanced logging..." | tee /proc/1/fd/1\nexport PORT=3001\nexport PYTHONUNBUFFERED=1\nexec stdbuf -oL -eL uv run mcp-docker-server 2>&1 | tee /proc/1/fd/1' > /usr/local/bin/mcp-run && \
+    echo '#!/bin/bash\necho "Starting MCP Server with Debug Logging..."\nexport PORT=3001\nexport PYTHONUNBUFFERED=1\necho "Server will be available at http://localhost:3001"\npython -m debugpy --listen 0.0.0.0:5678 --wait-for-client /app/.venv/bin/mcp-docker-server' > /usr/local/bin/mcp-debug && \
+    echo '#!/bin/bash\necho "📚 Starting MCP Inspector for debugging..."\necho "Inspector will be available at http://localhost:6274"\necho "Connecting to stdio MCP server..."\nHOST=0.0.0.0 ALLOWED_ORIGINS=http://localhost:6274,http://0.0.0.0:6274 npx @modelcontextprotocol/inspector --config /app/inspector/mcp-config.json --server mcp-docker-server' > /usr/local/bin/mcp-inspector && \
+    echo '#!/bin/bash\necho "🔍 Starting MCP Inspector with stdio connection..."\necho "Inspector will be available at http://localhost:6274"\necho "Connecting directly to MCP server via stdio..."\nHOST=0.0.0.0 ALLOWED_ORIGINS=http://localhost:6274,http://0.0.0.0:6274 npx @modelcontextprotocol/inspector --config /app/inspector/mcp-config.json --server mcp-docker-server' > /usr/local/bin/mcp-debug-inspector && \
+    echo '#!/bin/bash\ntaplo check pyproject.toml --schema https://json.schemastore.org/pyproject.json' > /usr/local/bin/pyproject-check && \
+    echo '#!/bin/bash\ntaplo format pyproject.toml' > /usr/local/bin/pyproject-format && \
+    chmod +x /usr/local/bin/python-lint /usr/local/bin/prettier-format /usr/local/bin/prettier-check \
+             /usr/local/bin/mcp-run /usr/local/bin/mcp-debug /usr/local/bin/mcp-inspector /usr/local/bin/mcp-debug-inspector \
+             /usr/local/bin/pyproject-check /usr/local/bin/pyproject-format
+
+# Create convenience script to list available commands with MCP Inspector info  
+RUN echo '#!/bin/bash\n\
+echo "🐋 MCP Server Docker Development Environment"\n\
+echo "============================================"\n\
+echo ""\n\
+echo "📚 MCP Debugging Commands:"\n\
+echo "  mcp-run              - Run the MCP server (port 3001)"\n\
+echo "  mcp-debug            - Run MCP server with debugpy (debug port 5678)"\n\
+echo "  mcp-inspector        - Run MCP Inspector only (port 6274)"\n\
+echo "  mcp-debug-inspector  - Run both server and inspector with auto-connect"\n\
+echo ""\n\
+echo "🛠️  Development Tools:"\n\
+echo "  python-lint          - Run ruff linter on Python files"\n\
+echo "  prettier-format      - Format JSON and Markdown files"\n\
+echo "  prettier-check       - Check JSON and Markdown formatting"\n\
+echo "  pyproject-check      - Check pyproject.toml format"\n\
+echo "  pyproject-format     - Format pyproject.toml"\n\
+echo ""\n\
+echo "📚 For debugging, use MCP Inspector:"\n\
+echo "  mcp-inspector        - Start MCP Inspector with stdio connection"\n\
+echo "  mcp-debug-inspector  - Same as mcp-inspector (simplified)"\n\
+echo "  # Inspector connects directly to MCP server via stdio"\n\
+echo ""\n\
+echo "🌐 Access URLs when running:"\n\
+echo "  MCP Inspector: http://localhost:6274"\n\
+echo "  Debug Port:    localhost:5678 (for Python debugging)"\n\
+echo "  # MCP Server runs via stdio (no HTTP endpoint)"\n\
+echo ""\n\
+echo "📦 Additional tools available:"\n\
+echo "  uv              - Python package manager"\n\
+echo "  node/npm/npx    - Node.js runtime and package manager"\n\
+echo "  taplo           - TOML formatter/linter"\n\
+echo "  cargo           - Rust package manager"\n\
+echo ""\n\
+echo "Usage: <command-name>"\n\
+echo "Example: mcp-debug-inspector"' > /usr/local/bin/devbox-help && \
+    chmod +x /usr/local/bin/devbox-help
+
+# Ensure executables in the venv take precedence over system executables
+ENV PATH="/app/.venv/bin:/root/.local/bin:/root/.cargo/bin:$PATH"
+
+# Set development environment variables for optimal logging
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV UV_COMPILE_BYTECODE=0
+ENV PYTHONFAULTHANDLER=1
+ENV PYTHONHASHSEED=random
+ENV LOGURU_LEVEL=DEBUG
+ENV FORCE_COLOR=1
+ENV TERM=xterm-256color
+
+# Expose MCP Server and Inspector debugging ports
+EXPOSE 3001 6274 6277 5678 8080 3000 8000
+
+# Default command for development shell
+CMD ["bash"]

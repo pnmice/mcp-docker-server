@@ -1,0 +1,6 @@
+.venv
+.mypy_cache
+.pytest_cache
+.coverage
+.claude
+.ruff_cache
