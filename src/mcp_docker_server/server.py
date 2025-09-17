@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sys
 import time
 import traceback
@@ -301,7 +302,7 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fetch_container_logs",
-            description="Fetch logs for a Docker container",
+            description="Fetch logs for a Docker container with optional filtering (grep-like search, time range)",
             inputSchema=FetchContainerLogsInput.model_json_schema(),
         ),
         types.Tool(
@@ -712,11 +713,31 @@ def _handle_container_tools(name: str, arguments: dict[str, Any]) -> Any | None:
 
     elif name == "fetch_container_logs":
         logs_args = FetchContainerLogsInput(**arguments)
-        container = _docker.containers.get(logs_args.container_id)
-        logs = container.logs(tail=logs_args.tail).decode("utf-8")
-        return {"logs": logs.split("\n")}
+        return _handle_fetch_container_logs(logs_args)
 
     return None
+
+
+def _handle_fetch_container_logs(logs_args: FetchContainerLogsInput) -> dict[str, Any]:
+    """Handle fetching container logs with optional filtering."""
+    container = _docker.containers.get(logs_args.container_id)
+
+    # Prepare kwargs for container.logs()
+    logs_kwargs: dict[str, Any] = {"tail": logs_args.tail}
+    if logs_args.since:
+        logs_kwargs["since"] = logs_args.since
+    if logs_args.until:
+        logs_kwargs["until"] = logs_args.until
+
+    logs = container.logs(**logs_kwargs).decode("utf-8")
+    log_lines = logs.split("\n")
+
+    # Apply grep filtering if specified
+    if logs_args.grep:
+        pattern = re.compile(logs_args.grep, re.IGNORECASE)
+        log_lines = [line for line in log_lines if pattern.search(line)]
+
+    return {"logs": log_lines}
 
 
 def _format_images_bulk(images_data: list[dict[str, Any]]) -> list[dict[str, Any]]:

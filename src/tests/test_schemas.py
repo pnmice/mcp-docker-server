@@ -102,13 +102,20 @@ class TestInputSchemas:
 
     def test_fetch_container_logs_input_valid(self) -> None:
         """Test valid FetchContainerLogsInput."""
-        schema = FetchContainerLogsInput(container_id="test", tail=50)
+        schema = FetchContainerLogsInput(
+            container_id="test", tail=50, grep=None, since=None, until=None
+        )
         assert schema.container_id == "test"
         assert schema.tail == 50
+        assert schema.grep is None
+        assert schema.since is None
+        assert schema.until is None
 
     def test_fetch_container_logs_input_default_tail(self) -> None:
         """Test FetchContainerLogsInput default tail."""
-        schema = FetchContainerLogsInput(container_id="test")  # type: ignore[call-arg]
+        schema = FetchContainerLogsInput(
+            container_id="test", tail=100, grep=None, since=None, until=None
+        )
         assert schema.tail == 100
 
     def test_list_images_input_valid(self) -> None:

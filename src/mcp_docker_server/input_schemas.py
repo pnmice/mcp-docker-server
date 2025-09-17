@@ -61,6 +61,17 @@ class FetchContainerLogsInput(JSONParsingModel):
     tail: int | Literal["all"] = Field(
         100, description="Number of lines to show from the end"
     )
+    grep: str | None = Field(
+        None, description="Filter logs by pattern (case-insensitive grep-like search)"
+    )
+    since: str | None = Field(
+        None,
+        description="Show logs since timestamp (e.g. 2013-01-02T13:23:37Z) or relative (e.g. 42m for 42 minutes)",
+    )
+    until: str | None = Field(
+        None,
+        description="Show logs until timestamp (e.g. 2013-01-02T13:23:37Z) or relative (e.g. 42m for 42 minutes)",
+    )
 
 
 class ListContainersFilters(JSONParsingModel):

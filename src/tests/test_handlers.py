@@ -167,6 +167,91 @@ class TestContainerHandlers:
         mock_docker_client.containers.get.assert_called_once_with("test_id")
         mock_container.logs.assert_called_once_with(tail=100)
 
+    def test_fetch_container_logs_with_grep_filter(
+        self, mock_docker_client: Mock
+    ) -> None:
+        """Test container log fetching with grep filtering."""
+        # Create fresh mock container for this test
+        mock_container = Mock()
+        mock_container.logs.return_value = b"INFO: Starting application\nERROR: Database connection failed\nINFO: Retrying connection\nERROR: Still failing\n"
+        mock_docker_client.containers.get.return_value = mock_container
+
+        result = _handle_container_tools(
+            "fetch_container_logs",
+            {"container_id": "test_id", "tail": 100, "grep": "ERROR"},
+        )
+
+        assert result is not None
+        assert "logs" in result
+        assert len(result["logs"]) == 2
+        assert "ERROR: Database connection failed" in result["logs"]
+        assert "ERROR: Still failing" in result["logs"]
+        mock_docker_client.containers.get.assert_called_once_with("test_id")
+        mock_container.logs.assert_called_once_with(tail=100)
+
+    def test_fetch_container_logs_with_time_filters(
+        self, mock_docker_client: Mock, mock_container: Mock
+    ) -> None:
+        """Test container log fetching with time range filters."""
+        mock_docker_client.containers.get.return_value = mock_container
+        mock_container.logs.return_value = b"log line 1\nlog line 2\n"
+
+        result = _handle_container_tools(
+            "fetch_container_logs",
+            {
+                "container_id": "test_id",
+                "tail": 100,
+                "since": "2023-01-01T00:00:00Z",
+                "until": "2023-12-31T23:59:59Z",
+            },
+        )
+
+        assert result is not None
+        assert "logs" in result
+        assert result["logs"] == ["log line 1", "log line 2", ""]
+        mock_docker_client.containers.get.assert_called_once_with("test_id")
+        mock_container.logs.assert_called_once_with(
+            tail=100, since="2023-01-01T00:00:00Z", until="2023-12-31T23:59:59Z"
+        )
+
+    def test_fetch_container_logs_grep_case_insensitive(
+        self, mock_docker_client: Mock, mock_container: Mock
+    ) -> None:
+        """Test container log grep filtering is case-insensitive."""
+        mock_docker_client.containers.get.return_value = mock_container
+        mock_container.logs.return_value = (
+            b"Error: Something failed\nerror: Another issue\nINFO: All good\n"
+        )
+
+        result = _handle_container_tools(
+            "fetch_container_logs",
+            {"container_id": "test_id", "tail": 100, "grep": "error"},
+        )
+
+        assert result is not None
+        assert "logs" in result
+        assert len(result["logs"]) == 2
+        assert "Error: Something failed" in result["logs"]
+        assert "error: Another issue" in result["logs"]
+
+    def test_fetch_container_logs_no_matches(
+        self, mock_docker_client: Mock, mock_container: Mock
+    ) -> None:
+        """Test container log fetching when grep pattern matches nothing."""
+        mock_docker_client.containers.get.return_value = mock_container
+        mock_container.logs.return_value = (
+            b"INFO: Starting application\nINFO: Everything is fine\n"
+        )
+
+        result = _handle_container_tools(
+            "fetch_container_logs",
+            {"container_id": "test_id", "tail": 100, "grep": "ERROR"},
+        )
+
+        assert result is not None
+        assert "logs" in result
+        assert result["logs"] == []
+
     def test_container_not_found(self, mock_docker_client: Mock) -> None:
         """Test handling of container not found error."""
         mock_docker_client.containers.get.side_effect = NotFound("Container not found")

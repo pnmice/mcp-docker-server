@@ -43,7 +43,20 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uvx mcp-docker-server
 ```
 
-#### Option 2: Development Installation
+#### Option 2: Install from PyPI
+
+```bash
+pip install mcp-docker-server
+```
+
+#### Option 3: Install from Test PyPI (Testing/Preview versions)
+
+```bash
+# Install from Test PyPI with PyPI fallback for dependencies
+pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ mcp-docker-server
+```
+
+#### Option 4: Development Installation
 
 ```bash
 git clone https://github.com/pnmice/mcp-docker-server
@@ -241,33 +254,6 @@ The server implements a couple resources for every container:
 - `get_docker_disk_usage`
 - `get_container_stats`
 
-## 🔧 Why mcp-docker-server?
-
-### Addresses Real DevOps Pain Points
-
-**Fragmented Toolchains**: Instead of context-switching between multiple CLIs, UIs, and scripts, manage Docker environments through unified natural language commands.
-
-**Configuration Drift**: Maintain consistent container configurations across environments with declarative, conversational management that's easy to audit and reproduce.
-
-**Observability Gaps**: Get comprehensive container insights without juggling multiple monitoring tools—logs, stats, and health checks in one interface.
-
-**Remote Management Complexity**: Securely manage Docker environments over SSH without VPN overhead or complex authentication setups.
-
-### Complements Your Existing Stack
-
-mcp-docker-server doesn't replace your infrastructure stack—it enhances it:
-
-- **With Kubernetes**: Perfect for local development and staging environments before K8s deployment
-- **With Terraform**: Manage containerized applications while Terraform handles infrastructure provisioning  
-- **With CI/CD**: Integrate as a development and testing tool in your Jenkins, GitHub Actions, or GitLab pipelines
-- **With Monitoring**: Supplement Prometheus and Grafana with conversational debugging and rapid container introspection
-
-### Built for Production Mindset
-
-- **Security First**: Input validation, SSH key management, and no privileged operations by default
-- **Remote-Ready**: Designed for distributed teams managing infrastructure across multiple environments
-- **Automation-Friendly**: Scriptable, API-driven architecture that fits existing workflow automation
-
 ## 🚧 Security & Best Practices
 
 ### Sensitive Data
@@ -281,21 +267,10 @@ LLM is running on your local machine.
 If you are interested in securely passing secrets to containers, file an issue
 on this repository with your use-case.
 
-### Reviewing Created Containers
-
-Be careful to review the containers that the LLM creates. Docker is not a secure
-sandbox, and therefore the MCP server can potentially impact the host machine
-through Docker.
-
-For safety reasons, this MCP server doesn't support sensitive Docker options
-like `--privileged` or `--cap-add/--cap-drop`. If these features are of interest
-to you, file an issue on this repository with your use-case.
-
 ## 🛠️ Configuration
 
 This server uses the Python Docker SDK's `from_env` method. For configuration
-details, see
-[the documentation](https://docker-py.readthedocs.io/en/stable/client.html#docker.client.from_env).
+details, see [the documentation](https://docker-py.readthedocs.io/en/stable/client.html#docker.client.from_env).
 
 ### Connect to Docker over SSH
 
@@ -487,7 +462,5 @@ mcp-docker-server is more than a tool—it's a step toward democratizing infrast
 We're building toward a future where automation, AI, and resilient infrastructure empower every technologist to build, experiment, and scale with confidence—breaking down barriers between creativity and operational excellence.
 
 ---
-
-**Ready to transform your Docker workflow?** [Get started](#-quick-start) or [join the conversation](#-contributing-to-the-future-of-devops).
 
 *Built with ❤️ for the DevOps community*
