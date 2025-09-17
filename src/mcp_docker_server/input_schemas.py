@@ -222,6 +222,20 @@ class RemoveVolumeInput(JSONParsingModel):
     force: bool = Field(False, description="Force remove the volume")
 
 
+class GetDockerDiskUsageInput(JSONParsingModel):
+    verbose: bool = Field(False, description="Show detailed information on space usage")
+
+
+class GetContainerStatsInput(JSONParsingModel):
+    containers: list[str] | None = Field(
+        None,
+        description="List of container IDs or names to get stats for. If None, gets stats for all running containers",
+    )
+    all: bool = Field(
+        False, description="Show stats for all containers (default shows just running)"
+    )
+
+
 class DockerComposePromptInput(BaseModel):
     name: str
     containers: str

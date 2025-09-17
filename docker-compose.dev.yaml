@@ -31,6 +31,8 @@ services:
       - "3000:3000"   # Additional dev port
       - "8000:8000"   # Additional dev port
     
+    env_file:
+      - .env
     # Environment variables for optimal logging and debugging
     environment:
       - PYTHONDONTWRITEBYTECODE=1
@@ -39,7 +41,6 @@ services:
       - PYTHONFAULTHANDLER=1
       - PYTHONHASHSEED=random
       - SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock
-      - DOCKER_HOST=ssh://shainy
       - PORT=3001
       # Enhanced logging configuration
       - PYTHONPATH=/app/src

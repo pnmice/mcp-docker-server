@@ -51,6 +51,8 @@ class TestMcpServer:
             "list_volumes",
             "create_volume",
             "remove_volume",
+            "get_docker_disk_usage",
+            "get_container_stats",
         ]
 
         for expected_tool in expected_tools:

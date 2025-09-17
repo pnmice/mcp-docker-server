@@ -22,6 +22,8 @@ from .input_schemas import (
     CreateVolumeInput,
     DockerComposePromptInput,
     FetchContainerLogsInput,
+    GetContainerStatsInput,
+    GetDockerDiskUsageInput,
     ListContainersFilters,
     ListContainersInput,
     ListImagesInput,
@@ -366,6 +368,16 @@ async def list_tools() -> list[types.Tool]:
             name="remove_volume",
             description="Remove a Docker volume",
             inputSchema=RemoveVolumeInput.model_json_schema(),
+        ),
+        types.Tool(
+            name="get_docker_disk_usage",
+            description="Get Docker disk usage information (equivalent to 'docker system df')",
+            inputSchema=GetDockerDiskUsageInput.model_json_schema(),
+        ),
+        types.Tool(
+            name="get_container_stats",
+            description="Get container resource usage statistics (equivalent to 'docker stats')",
+            inputSchema=GetContainerStatsInput.model_json_schema(),
         ),
     ]
 
@@ -1018,6 +1030,443 @@ def _handle_volume_tools(name: str, arguments: dict[str, Any]) -> Any | None:
     return None
 
 
+def _handle_system_tools(name: str, arguments: dict[str, Any]) -> Any | None:
+    """Handle system-related tool operations."""
+    if name == "get_docker_disk_usage":
+        disk_usage_args = GetDockerDiskUsageInput(**arguments)
+        return _handle_get_docker_disk_usage(disk_usage_args)
+
+    elif name == "get_container_stats":
+        stats_args = GetContainerStatsInput(**arguments)
+        return _handle_get_container_stats(stats_args)
+
+    return None
+
+
+def _format_bytes(bytes_value: int) -> str:
+    """Format bytes into human readable format like Docker stats."""
+    if bytes_value == 0:
+        return "0B"
+
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    unit_index = 0
+    value = float(bytes_value)
+
+    while value >= 1024 and unit_index < len(units) - 1:
+        value /= 1024
+        unit_index += 1
+
+    if value < 10:
+        return f"{value:.1f}{units[unit_index]}"
+    else:
+        return f"{value:.0f}{units[unit_index]}"
+
+
+def _calculate_cpu_percent(stats: dict[str, Any]) -> float:
+    """Calculate CPU percentage from Docker stats."""
+    try:
+        cpu_stats = stats.get("cpu_stats", {})
+        precpu_stats = stats.get("precpu_stats", {})
+
+        cpu_usage = cpu_stats.get("cpu_usage", {})
+        precpu_usage = precpu_stats.get("cpu_usage", {})
+
+        cpu_total = cpu_usage.get("total_usage", 0)
+        precpu_total = precpu_usage.get("total_usage", 0)
+        cpu_delta = cpu_total - precpu_total
+
+        system_cpu_delta = cpu_stats.get("system_cpu_usage", 0) - precpu_stats.get(
+            "system_cpu_usage", 0
+        )
+
+        if system_cpu_delta > 0 and cpu_delta > 0:
+            online_cpus = cpu_stats.get(
+                "online_cpus", len(cpu_usage.get("percpu_usage", [1]))
+            )
+            cpu_percent = (cpu_delta / system_cpu_delta) * online_cpus * 100.0
+            return float(round(cpu_percent, 2))
+
+        return 0.0
+    except (KeyError, TypeError, ZeroDivisionError):
+        return 0.0
+
+
+def _format_container_stats(container: Any, stats: dict[str, Any]) -> dict[str, Any]:
+    """Format container stats similar to docker stats output."""
+    try:
+        # Basic container info
+        container_id = container.short_id
+        container_name = container.name
+
+        # CPU percentage
+        cpu_percent = _calculate_cpu_percent(stats)
+
+        # Memory stats
+        memory_stats = stats.get("memory_stats", {})
+        memory_usage = memory_stats.get("usage", 0)
+        memory_limit = memory_stats.get("limit", 0)
+        memory_percent = (
+            (memory_usage / memory_limit * 100) if memory_limit > 0 else 0.0
+        )
+
+        # Network I/O
+        networks = stats.get("networks", {})
+        net_rx = sum(net.get("rx_bytes", 0) for net in networks.values())
+        net_tx = sum(net.get("tx_bytes", 0) for net in networks.values())
+
+        # Block I/O
+        blkio_stats = stats.get("blkio_stats", {})
+        io_service_bytes = blkio_stats.get("io_service_bytes_recursive", [])
+
+        block_read = 0
+        block_write = 0
+        for io_stat in io_service_bytes:
+            if io_stat.get("op") == "Read":
+                block_read += io_stat.get("value", 0)
+            elif io_stat.get("op") == "Write":
+                block_write += io_stat.get("value", 0)
+
+        # PIDs
+        pids_stats = stats.get("pids_stats", {})
+        pids = pids_stats.get("current", 0)
+
+        return {
+            "container_id": container_id,
+            "name": container_name,
+            "cpu_percent": f"{cpu_percent:.2f}%",
+            "memory_usage": _format_bytes(memory_usage),
+            "memory_limit": _format_bytes(memory_limit),
+            "memory_usage_limit": f"{_format_bytes(memory_usage)} / {_format_bytes(memory_limit)}",
+            "memory_percent": f"{memory_percent:.2f}%",
+            "net_rx": _format_bytes(net_rx),
+            "net_tx": _format_bytes(net_tx),
+            "net_io": f"{_format_bytes(net_rx)} / {_format_bytes(net_tx)}",
+            "block_read": _format_bytes(block_read),
+            "block_write": _format_bytes(block_write),
+            "block_io": f"{_format_bytes(block_read)} / {_format_bytes(block_write)}",
+            "pids": str(pids),
+            "raw_stats": stats,  # Include raw stats for debugging/advanced use
+        }
+    except Exception as e:
+        logger.warning(f"Error formatting stats for container {container.name}: {e}")
+        return {
+            "container_id": getattr(container, "short_id", "unknown"),
+            "name": getattr(container, "name", "unknown"),
+            "cpu_percent": "0.00%",
+            "memory_usage": "0B",
+            "memory_limit": "0B",
+            "memory_usage_limit": "0B / 0B",
+            "memory_percent": "0.00%",
+            "net_rx": "0B",
+            "net_tx": "0B",
+            "net_io": "0B / 0B",
+            "block_read": "0B",
+            "block_write": "0B",
+            "block_io": "0B / 0B",
+            "pids": "0",
+            "error": str(e),
+        }
+
+
+def _get_containers_for_stats(args: GetContainerStatsInput) -> list[Any]:
+    """Get the list of containers to collect stats for."""
+    if args.containers:
+        # Get specific containers by ID/name
+        containers = []
+        for container_id in args.containers:
+            try:
+                container = _docker.containers.get(container_id)
+                containers.append(container)
+            except Exception as e:
+                logger.warning(f"Container {container_id} not found: {e}")
+        return containers
+    else:
+        # Get all containers (running or all based on args.all)
+        return list(_docker.containers.list(all=args.all))
+
+
+def _create_error_stats_entry(container: Any, error: Exception) -> dict[str, Any]:
+    """Create an error stats entry for a container that failed stats collection."""
+    return {
+        "container_id": getattr(container, "short_id", "unknown"),
+        "name": getattr(container, "name", "unknown"),
+        "cpu_percent": "N/A",
+        "memory_usage": "N/A",
+        "memory_limit": "N/A",
+        "memory_usage_limit": "N/A",
+        "memory_percent": "N/A",
+        "net_rx": "N/A",
+        "net_tx": "N/A",
+        "net_io": "N/A",
+        "block_read": "N/A",
+        "block_write": "N/A",
+        "block_io": "N/A",
+        "pids": "N/A",
+        "error": str(error),
+    }
+
+
+def _collect_container_stats(containers: list[Any]) -> list[dict[str, Any]]:
+    """Collect stats for each container in the list."""
+    container_stats = []
+    for container in containers:
+        try:
+            # Get stats for this container (non-streaming)
+            stats = container.stats(stream=False)
+            formatted_stats = _format_container_stats(container, stats)
+            container_stats.append(formatted_stats)
+        except Exception as e:
+            logger.warning(f"Failed to get stats for container {container.name}: {e}")
+            # Add error entry
+            container_stats.append(_create_error_stats_entry(container, e))
+    return container_stats
+
+
+def _handle_get_container_stats(args: GetContainerStatsInput) -> list[dict[str, Any]]:
+    """Handle get_container_stats operation to show container resource usage statistics."""
+    start_time = time.time()
+    logger.info(f"📊 Starting get_container_stats operation with args: {args}")
+
+    try:
+        # Get containers to collect stats for
+        containers = _get_containers_for_stats(args)
+
+        if not containers:
+            logger.info("No containers found for stats collection")
+            return []
+
+        # Collect stats for each container
+        container_stats = _collect_container_stats(containers)
+
+        total_time = time.time() - start_time
+        logger.info(f"🏁 Total get_container_stats operation took {total_time:.3f}s")
+
+        return container_stats
+
+    except Exception as e:
+        logger.error(f"❌ Error in get_container_stats: {e}")
+        raise e
+
+
+def _collect_usage_data() -> (
+    tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]
+):
+    """Collect raw data from Docker APIs for disk usage calculation."""
+    images_data = _docker_api.images()
+    containers_data = _docker_api.containers(all=True)
+    volumes_response = _docker_api.volumes()
+    volumes_data = volumes_response.get("Volumes", []) if volumes_response else []
+    return images_data, containers_data, volumes_data
+
+
+def _calculate_usage_summary(
+    images_data: list[dict[str, Any]],
+    containers_data: list[dict[str, Any]],
+    volumes_data: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Calculate summary statistics for Docker disk usage."""
+    # Images calculations
+    images_total = len(images_data)
+    images_size = sum(img.get("Size", 0) for img in images_data)
+
+    active_image_ids = {
+        container["ImageID"] for container in containers_data if "ImageID" in container
+    }
+    images_active = len(active_image_ids)
+
+    inactive_images_size = sum(
+        img.get("Size", 0)
+        for img in images_data
+        if img.get("Id", "") not in active_image_ids
+    )
+
+    # Containers calculations
+    containers_total = len(containers_data)
+    containers_active = len([c for c in containers_data if c.get("State") == "running"])
+    containers_size = sum(c.get("SizeRw", 0) for c in containers_data)
+
+    # Volumes calculations
+    volumes_total = len(volumes_data)
+    active_volume_names = set()
+    for container in containers_data:
+        for mount in container.get("Mounts", []):
+            if mount.get("Type") == "volume" and mount.get("Name"):
+                active_volume_names.add(mount["Name"])
+    volumes_active = len(active_volume_names)
+    volumes_size = 0  # Would require additional API calls to get actual size
+
+    # Build cache (placeholder values)
+    build_cache_total = 0
+    build_cache_active = 0
+    build_cache_size = 0
+
+    return {
+        "type": "summary",
+        "data": [
+            {
+                "type": "Images",
+                "total": images_total,
+                "active": images_active,
+                "size": images_size,
+                "reclaimable": inactive_images_size,
+                "reclaimable_percent": round(
+                    (
+                        (inactive_images_size / images_size * 100)
+                        if images_size > 0
+                        else 0
+                    ),
+                    1,
+                ),
+            },
+            {
+                "type": "Containers",
+                "total": containers_total,
+                "active": containers_active,
+                "size": containers_size,
+                "reclaimable": 0,
+                "reclaimable_percent": 0,
+            },
+            {
+                "type": "Local Volumes",
+                "total": volumes_total,
+                "active": volumes_active,
+                "size": volumes_size,
+                "reclaimable": volumes_size,
+                "reclaimable_percent": 100 if volumes_total > volumes_active else 0,
+            },
+            {
+                "type": "Build Cache",
+                "total": build_cache_total,
+                "active": build_cache_active,
+                "size": build_cache_size,
+                "reclaimable": build_cache_size,
+                "reclaimable_percent": 100,
+            },
+        ],
+    }
+
+
+def _add_detailed_info(
+    summary: dict[str, Any],
+    images_data: list[dict[str, Any]],
+    containers_data: list[dict[str, Any]],
+    volumes_data: list[dict[str, Any]],
+) -> None:
+    """Add detailed information to the summary for verbose mode."""
+    # Detailed images
+    detailed_images = []
+    for img_data in images_data:
+        image_id = img_data.get("Id", "")
+        repo_tags = img_data.get("RepoTags") or ["<none>:<none>"]
+        created = img_data.get("Created", 0)
+        size = img_data.get("Size", 0)
+        virtual_size = img_data.get("VirtualSize", 0)
+
+        container_count = sum(
+            1 for c in containers_data if c.get("ImageID") == image_id
+        )
+
+        for repo_tag in repo_tags:
+            repository, tag = (
+                repo_tag.rsplit(":", 1) if ":" in repo_tag else (repo_tag, "<none>")
+            )
+            detailed_images.append(
+                {
+                    "repository": repository,
+                    "tag": tag,
+                    "image_id": image_id[:12] if image_id else "",
+                    "created": created,
+                    "size": size,
+                    "shared_size": virtual_size - size if virtual_size > size else 0,
+                    "unique_size": size,
+                    "containers": container_count,
+                }
+            )
+
+    # Detailed containers
+    detailed_containers = []
+    for container_data in containers_data:
+        container_id = container_data.get("Id", "")
+        image = container_data.get("Image", "")
+        command = container_data.get("Command", "")
+        if isinstance(command, list) and command:
+            command = command[0]
+
+        names = container_data.get("Names", [])
+        container_name = (
+            names[0][1:]
+            if names and names[0].startswith("/")
+            else (names[0] if names else "")
+        )
+
+        mounts = container_data.get("Mounts", [])
+        local_volumes = len([m for m in mounts if m.get("Type") == "volume"])
+
+        detailed_containers.append(
+            {
+                "container_id": container_id[:12] if container_id else "",
+                "image": image,
+                "command": command,
+                "local_volumes": local_volumes,
+                "size": container_data.get("SizeRw", 0),
+                "created": container_data.get("Created", 0),
+                "status": container_data.get("Status", ""),
+                "names": container_name,
+            }
+        )
+
+    # Detailed volumes
+    detailed_volumes = []
+    for volume_data in volumes_data:
+        volume_name = volume_data.get("Name", "")
+        links = sum(
+            1
+            for container in containers_data
+            for mount in container.get("Mounts", [])
+            if mount.get("Type") == "volume" and mount.get("Name") == volume_name
+        )
+        detailed_volumes.append(
+            {
+                "volume_name": volume_name,
+                "links": links,
+                "size": 0,
+            }
+        )
+
+    summary["detailed"] = {
+        "images": detailed_images,
+        "containers": detailed_containers,
+        "volumes": detailed_volumes,
+        "build_cache": [],
+    }
+
+
+def _handle_get_docker_disk_usage(args: GetDockerDiskUsageInput) -> dict[str, Any]:
+    """Handle get_docker_disk_usage operation to show Docker disk usage."""
+    start_time = time.time()
+    logger.info(f"💾 Starting get_docker_disk_usage operation with args: {args}")
+
+    try:
+        # Collect raw data
+        images_data, containers_data, volumes_data = _collect_usage_data()
+
+        # Calculate summary
+        summary = _calculate_usage_summary(images_data, containers_data, volumes_data)
+
+        # Add detailed info if requested
+        if args.verbose:
+            _add_detailed_info(summary, images_data, containers_data, volumes_data)
+
+        total_time = time.time() - start_time
+        logger.info(f"🏁 Total get_docker_disk_usage operation took {total_time:.3f}s")
+
+        return summary
+
+    except Exception as e:
+        logger.error(f"❌ Error in get_docker_disk_usage: {e}")
+        raise e
+
+
 @app.call_tool()  # type: ignore[misc]
 async def call_tool(
     name: str, arguments: Any
@@ -1034,6 +1483,7 @@ async def call_tool(
         _handle_image_tools,
         _handle_network_tools,
         _handle_volume_tools,
+        _handle_system_tools,
     ]
 
     try:

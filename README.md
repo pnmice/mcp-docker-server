@@ -1,66 +1,110 @@
-# 🐋 Docker MCP server
+# 🐋 mcp-docker-server
 
-An MCP server for managing Docker with natural language!
+**Effortlessly orchestrate and oversee Docker environments from anywhere, using natural, conversational commands.**
 
-## 🪩 What can it do?
+mcp-docker-server is an open-source MCP (Model Context Protocol) server that transforms Docker container management by bridging the gap between human intuition and automation. Built for DevOps professionals who demand both power and simplicity.
 
-- 🚀 Compose containers with natural language
-- 🔍 Introspect & debug running containers
-- 📀 Manage persistent data with Docker volumes
+## 🎯 Core Capabilities
 
-## ❓ Who is this for?
+- **🗣️ Natural Language Orchestration**: Compose multi-container environments using conversational commands
+- **🔗 Remote SSH Management**: Securely manage Docker environments across local and remote infrastructure
+- **🔍 Intelligent Debugging**: Introspect running containers with AI-assisted troubleshooting
+- **📊 Unified Observability**: Monitor container stats, logs, and resource usage from a single interface
+- **⚡ Automation-Ready**: Integrate with CI/CD pipelines and infrastructure-as-code workflows
 
-- Server administrators: connect to remote Docker engines for e.g. managing a
-  public-facing website.
-- Tinkerers: run containers locally and experiment with open-source apps
-  supporting Docker.
-- AI enthusiasts: push the limits of that an LLM is capable of!
+## 👥 Built for DevOps Professionals
 
-## 🏎️ Quickstart
+**DevOps Engineers & SREs**: Reduce cognitive load when managing complex container environments. Replace fragmented toolchains with unified, conversational control.
 
+**Cloud Architects & Consultants**: Demonstrate rapid prototyping and environment setup to clients. Manage multiple client infrastructures with consistent, intuitive commands.
 
+**Open Source Contributors**: Contribute to a tool that democratizes infrastructure automation. Help build the future of developer-friendly container management.
 
-### Install
+**Scale-up Teams**: Accelerate development velocity without sacrificing operational reliability. Perfect for teams transitioning from manual processes to automated infrastructure.
 
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Docker**: Ensure Docker is running locally or accessible via SSH
+- **Python 3.11+**: Required for the MCP server
+- **Claude Desktop or Claude Code**: For natural language interaction
+
+### Installation
+
+#### Option 1: Direct Installation with uv (Recommended)
+
+```bash
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# or: brew install uv
+
+# Install mcp-docker-server
+uvx mcp-docker-server
 ```
-pip install uv
-```
 
-```
-brew install uv
-```
+#### Option 2: Development Installation
 
-```
+```bash
+git clone https://github.com/pnmice/mcp-docker-server
 cd mcp-docker-server
 uv tool install .
-```
 
-Forcing a reinstall (e.g. after pulling new changes):
-```
+# Force reinstall after updates
 uv tool install --force --reinstall .
 ```
 
-If you don't have `uv` installed, follow the installation instructions for your system:
-
-[link](https://docs.astral.sh/uv/getting-started/installation/#installation-methods)
+### Configuration
 
 #### Claude code
 
 MacOS (with Docker Desktop):
+
+Claude Code configuration:
 ```
 claude mcp add mcp-docker-server --env DOCKER_HOST=unix:///Users/youruser/.docker/run/docker.sock -- uvx mcp-docker-server
 ```
+Codex configuration:
+```
+cat ~/.codex/config.toml
+[mcp_servers.mcp-docker-server]
+command = "uvx"
+args = ["mcp-docker-server"]
+```
 
+Claude Code configuration:
 ```
 claude mcp add mcp-docker-server -- uvx mcp-docker-server
 ```
 
-Support ~/.ssh/config aliases:
+Codex configuration:
 ```
-claude mcp add mcp-docker-server-shainy --env DOCKER_HOST=ssh://your-ssh-config-alias -- uvx mcp-docker-server
+cat ~/.codex/config.toml
+[mcp_servers.mcp-docker-server]
+command = "uvx"
+args = ["mcp-docker-server"]
 ```
 
+Support ~/.ssh/config aliases:
+
+Claude Code configuration:
+```
+claude mcp add mcp-docker-server-alias --env DOCKER_HOST=ssh://your-ssh-config-alias -- uvx mcp-docker-server
+```
+
+Codex configuration:
+```
+cat ~/.codex/config.toml
+[mcp_servers.mcp-docker-server-alias]
+command = "uvx"
+args = ["mcp-docker-server"]
+env = { DOCKER_HOST = "ssh://your-ssh-config-alias" }
+``` 
+
 #### Claude Desktop
+
+<details>
+  <summary>Claude Desktop Configuration</summary>
 
 On MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
 
@@ -68,13 +112,15 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 
 Then add the following to your MCP servers file:
 
-```
-"mcpServers": {
-  "mcp-docker-server": {
-    "command": "uvx",
-    "args": [
-      "mcp-docker-server"
-    ]
+```json
+{
+  "mcpServers": {
+    "mcp-docker-server": {
+      "command": "uvx",
+      "args": [
+        "mcp-docker-server"
+      ]
+    }
   }
 }
 ```
@@ -94,18 +140,20 @@ docker build -t mcp-docker-server .
 
 And then add the following to your MCP servers file:
 
-```
-"mcpServers": {
-  "mcp-docker-server": {
-    "command": "docker",
-    "args": [
-      "run",
-      "-i",
-      "--rm",
-      "-v",
-      "/var/run/docker.sock:/var/run/docker.sock",
-      "mcp-docker-server:latest"
-    ]
+```json
+{
+  "mcpServers": {
+    "mcp-docker-server": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-v",
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "mcp-docker-server:latest"
+      ]
+    }
   }
 }
 ```
@@ -188,7 +236,39 @@ The server implements a couple resources for every container:
 - `create_volume`
 - `remove_volume`
 
-## 🚧 Disclaimers
+### Monitoring
+
+- `get_docker_disk_usage`
+- `get_container_stats`
+
+## 🔧 Why mcp-docker-server?
+
+### Addresses Real DevOps Pain Points
+
+**Fragmented Toolchains**: Instead of context-switching between multiple CLIs, UIs, and scripts, manage Docker environments through unified natural language commands.
+
+**Configuration Drift**: Maintain consistent container configurations across environments with declarative, conversational management that's easy to audit and reproduce.
+
+**Observability Gaps**: Get comprehensive container insights without juggling multiple monitoring tools—logs, stats, and health checks in one interface.
+
+**Remote Management Complexity**: Securely manage Docker environments over SSH without VPN overhead or complex authentication setups.
+
+### Complements Your Existing Stack
+
+mcp-docker-server doesn't replace your infrastructure stack—it enhances it:
+
+- **With Kubernetes**: Perfect for local development and staging environments before K8s deployment
+- **With Terraform**: Manage containerized applications while Terraform handles infrastructure provisioning  
+- **With CI/CD**: Integrate as a development and testing tool in your Jenkins, GitHub Actions, or GitLab pipelines
+- **With Monitoring**: Supplement Prometheus and Grafana with conversational debugging and rapid container introspection
+
+### Built for Production Mindset
+
+- **Security First**: Input validation, SSH key management, and no privileged operations by default
+- **Remote-Ready**: Designed for distributed teams managing infrastructure across multiple environments
+- **Automation-Friendly**: Scriptable, API-driven architecture that fits existing workflow automation
+
+## 🚧 Security & Best Practices
 
 ### Sensitive Data
 
@@ -225,15 +305,17 @@ This MCP server can connect to a remote Docker daemon over SSH.
 
 Set a `ssh://` host URL with username and hostname in the MCP server definition:
 
-```
-"mcpServers": {
-  "mcp-docker-server": {
-    "command": "uvx",
-    "args": [
-      "mcp-docker-server"
-    ],
-    "env": {
-      "DOCKER_HOST": "ssh://myusername@myhost.example.com"
+```json
+{
+  "mcpServers": {
+    "mcp-docker-server": {
+      "command": "uvx",
+      "args": [
+        "mcp-docker-server"
+      ],
+      "env": {
+        "DOCKER_HOST": "ssh://myusername@myhost.example.com"
+      }
     }
   }
 }
@@ -243,15 +325,17 @@ Set a `ssh://` host URL with username and hostname in the MCP server definition:
 
 You can also use SSH config aliases defined in your `~/.ssh/config` file:
 
-```
-"mcpServers": {
-  "mcp-docker-server": {
-    "command": "uvx",
-    "args": [
-      "mcp-docker-server"
-    ],
-    "env": {
-      "DOCKER_HOST": "ssh://your-ssh-config-alias"
+```json
+{
+  "mcpServers": {
+    "mcp-docker-server": {
+      "command": "uvx",
+      "args": [
+        "mcp-docker-server"
+      ],
+      "env": {
+        "DOCKER_HOST": "ssh://your-ssh-config-alias"
+      }
     }
   }
 }
@@ -261,11 +345,37 @@ The server will automatically resolve SSH config aliases to their full connectio
 
 ## 💻 Development
 
+Build docker image for development:
+
+```
+docker build -t mcp-docker-server:dev -f Dockerfile.dev .
+```
+
+Run the development container:
+
+```
+mv env.example .env
+# replace your ssh config alias in .env
+# DOCKER_HOST=ssh://your-ssh-config-alias
+docker-compose -f docker-compose.dev.yaml up -d --build
+```
+
 Local development with Docker:
 
+Claude Code configuration:
 ```
 claude mcp add mcp-docker-server-dev --env DOCKER_HOST=unix:///Users/user/.docker/run/docker.sock -- docker run -i --rm -v /var/run/docker.sock:/var/run/docker.sock mcp-docker-server:dev mcp-run
 ```
+
+Codex configuration:
+```
+cat ~/.codex/config.toml  
+
+[mcp_servers.mcp-docker-server-dev]
+command = "docker"
+args = ["run", "-i", "--rm", "-v", "/var/run/docker.sock:/var/run/docker.sock", "mcp-docker-server:dev", "mcp-run"]
+```
+
 
 Remote development with Docker over SSH:
 
@@ -291,8 +401,18 @@ echo $! > ~/.ssh/agent-relay.pid
 docker-compose -f docker-compose.dev.yaml up -d --build
 ```
 
+Claude Code configuration:
 ```
 claude mcp add mcp-docker-server-dev -- docker exec -i mcp-docker-server-dev mcp-run
+```
+
+Codex configuration:
+```
+cat ~/.codex/config.toml
+
+[mcp_servers.mcp-docker-server-dev]
+command = "docker"
+args = ["exec", "-i", "mcp-docker-server-dev", "mcp-run"]
 ```
 
 ## Testing
@@ -350,3 +470,24 @@ Fail if coverage is below 85%
 ```
 pytest --cov=src/mcp_docker_server --cov-fail-under=85
 ```
+
+## 🌟 Contributing to the Future of DevOps
+
+mcp-docker-server is more than a tool—it's a step toward democratizing infrastructure automation. Built with the belief that powerful DevOps capabilities should be accessible, intuitive, and secure for all practitioners.
+
+### 🤝 Get Involved
+
+- **Report Issues**: Share your real-world use cases and pain points
+- **Contribute Code**: Help build features that matter to the DevOps community  
+- **Share Knowledge**: Write about your experiences and help others learn
+- **Spread the Word**: Help fellow DevOps engineers discover better ways to work
+
+### 💡 Vision
+
+We're building toward a future where automation, AI, and resilient infrastructure empower every technologist to build, experiment, and scale with confidence—breaking down barriers between creativity and operational excellence.
+
+---
+
+**Ready to transform your Docker workflow?** [Get started](#-quick-start) or [join the conversation](#-contributing-to-the-future-of-devops).
+
+*Built with ❤️ for the DevOps community*
