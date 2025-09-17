@@ -75,7 +75,9 @@ class TestDockerIntegration:
         import mcp_docker_server.server
 
         original_docker = mcp_docker_server.server._docker
+        original_docker_api = mcp_docker_server.server._docker_api
         mcp_docker_server.server._docker = real_docker_client
+        mcp_docker_server.server._docker_api = real_docker_client.api
 
         try:
             # Create container
@@ -109,6 +111,7 @@ class TestDockerIntegration:
         finally:
             # Restore original docker client
             mcp_docker_server.server._docker = original_docker
+            mcp_docker_server.server._docker_api = original_docker_api
 
             # Clean up
             try:
@@ -125,7 +128,9 @@ class TestDockerIntegration:
         import mcp_docker_server.server
 
         original_docker = mcp_docker_server.server._docker
+        original_docker_api = mcp_docker_server.server._docker_api
         mcp_docker_server.server._docker = real_docker_client
+        mcp_docker_server.server._docker_api = real_docker_client.api
 
         try:
             # List images
@@ -139,6 +144,7 @@ class TestDockerIntegration:
 
         finally:
             mcp_docker_server.server._docker = original_docker
+            mcp_docker_server.server._docker_api = original_docker_api
 
     @pytest.mark.asyncio
     async def test_network_operations(
@@ -155,7 +161,9 @@ class TestDockerIntegration:
         import mcp_docker_server.server
 
         original_docker = mcp_docker_server.server._docker
+        original_docker_api = mcp_docker_server.server._docker_api
         mcp_docker_server.server._docker = real_docker_client
+        mcp_docker_server.server._docker_api = real_docker_client.api
 
         try:
             # Create network
@@ -174,6 +182,7 @@ class TestDockerIntegration:
 
         finally:
             mcp_docker_server.server._docker = original_docker
+            mcp_docker_server.server._docker_api = original_docker_api
 
             # Clean up
             try:
@@ -197,7 +206,9 @@ class TestDockerIntegration:
         import mcp_docker_server.server
 
         original_docker = mcp_docker_server.server._docker
+        original_docker_api = mcp_docker_server.server._docker_api
         mcp_docker_server.server._docker = real_docker_client
+        mcp_docker_server.server._docker_api = real_docker_client.api
 
         try:
             # Create volume
@@ -216,6 +227,7 @@ class TestDockerIntegration:
 
         finally:
             mcp_docker_server.server._docker = original_docker
+            mcp_docker_server.server._docker_api = original_docker_api
 
             # Clean up
             try:
