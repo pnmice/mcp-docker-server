@@ -1,0 +1,124 @@
+[project]
+name = "mcp-docker-server"
+version = "0.0.1"
+description = "A Docker MCP Server"
+readme = "README.md"
+dependencies = [
+    "docker>=7.1.0",
+    "mcp>=1.1.0,<2.0",
+    "paramiko>=3.5.1,<4.0",
+    "pydantic>=2.10.3",
+    "pydantic-settings>=2.6.1",
+]
+license = { file = "LICENSE" }
+keywords = ["docker", "mcp", "server"]
+
+requires-python = ">=3.11"
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.11.0",
+    "pytest-docker>=3.1.0",
+    "coverage>=7.0.0",
+]
+lint = [
+    "flake8>=7.0.0",
+    "black>=24.0.0",
+    "isort>=5.13.0",
+    "mypy>=1.8.0",
+]
+dev = [
+    "mcp-docker-server[test,lint]",
+    "pre-commit>=3.6.0",
+]
+
+[project.urls]
+Repository = "https://github.com/pnmice/mcp-docker-server"
+Issues = "https://github.com/pnmice/mcp-docker-server/issues"
+
+[[project.authors]]
+name = "pnmice"
+email = "pnmice@gmail.com"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+mcp-docker-server = "mcp_docker_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_docker_server"]
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["mcp_docker_server"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = ["docker.*", "paramiko.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

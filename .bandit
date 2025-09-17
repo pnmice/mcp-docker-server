@@ -1,0 +1,12 @@
+[bandit]
+# Configuration for bandit security linter
+
+# Exclude test directories since assert statements are normal in tests
+exclude_dirs = src/tests
+
+# Skip specific checks that are not relevant for this project
+skips = B101  # Skip assert_used check since it's normal in tests
+
+# Test IDs to skip:
+# B101: assert_used - normal in test files
+# Tests should be excluded via exclude_dirs above but this is a backup

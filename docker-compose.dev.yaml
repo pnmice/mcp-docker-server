@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  mcp-docker-server-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      target: dev
+    image: mcp-docker-server:dev
+    container_name: mcp-docker-server-dev
+    
+    # Mount source code for live development
+    volumes:
+      - ./src/mcp_docker_server:/app/src/mcp_docker_server
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./uv.lock:/app/uv.lock
+      - ./README.md:/app/README.md
+      - ./LICENSE:/app/LICENSE
+      # SSH auth socket for remote Docker host access
+      - /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock
+      # SSH keys for authentication
+      - ~/.ssh:/root/.ssh:ro
+    
+    # Expose development ports
+    ports:
+      - "3001:3001"   # MCP Server
+      - "6274:6274"   # MCP Inspector
+      - "6277:6277"   # MCP Inspector alt
+      - "5678:5678"   # Python debugpy
+      - "8080:8080"   # Additional dev port
+      - "3000:3000"   # Additional dev port
+      - "8000:8000"   # Additional dev port
+    
+    # Environment variables for optimal logging and debugging
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - UV_COMPILE_BYTECODE=0
+      - PYTHONFAULTHANDLER=1
+      - PYTHONHASHSEED=random
+      - SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock
+      - DOCKER_HOST=ssh://shainy
+      - PORT=3001
+      # Enhanced logging configuration
+      - PYTHONPATH=/app/src
+      - MCP_DEBUG=1
+      - PYTHON_LOG_LEVEL=DEBUG
+      - DOCKER_LOG_LEVEL=DEBUG
+      - LOGURU_LEVEL=DEBUG
+      - FORCE_COLOR=1
+      - TERM=xterm-256color
+      # Ensure real-time log output
+      - PYTHONIOENCODING=utf-8
+      - LC_ALL=C.UTF-8
+      - LANG=C.UTF-8
+    
+    # Working directory
+    working_dir: /app
+    
+    # Keep container running for development
+    tty: true
+    stdin_open: true
+    
+    # Development command - keep container running for docker exec connections
+    command: ["bash", "-c", "echo 'Starting MCP Server with enhanced logging and performance monitoring...'; echo 'Environment: MCP_DEBUG=1, PYTHONUNBUFFERED=1'; echo 'Performance optimizations: Image caching, batched API calls'; echo 'Container ready for MCP connections via docker exec'; tail -f /dev/null"]
+    
+    # Configure logging driver for real-time output
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+        mode: "non-blocking"
+        max-buffer-size: "4m"
+    
+    # Network mode for proper connectivity
+    network_mode: "bridge"
