@@ -1,6 +1,6 @@
 [project]
 name = "mcp-docker-server"
-version = "0.0.5"
+version = "0.0.6"
 description = "A Docker MCP Server"
 readme = "README.md"
 dependencies = [
@@ -97,6 +97,10 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+exclude = [
+    "src/tests/.*",
+    "tests/.*"
+]
 
 [[tool.mypy.overrides]]
 module = ["docker.*", "paramiko.*"]
