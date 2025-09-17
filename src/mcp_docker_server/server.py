@@ -1263,7 +1263,6 @@ _connection_health_lock = Lock()
 
 def _update_connection_health(success: bool) -> None:
     """Update connection health metrics."""
-    global _connection_health
     with _connection_health_lock:
         _connection_health.total_attempts += 1
 
