@@ -3,6 +3,7 @@
 [![PyPI - Version](https://img.shields.io/pypi/v/mcp-docker-server)](https://pypi.org/project/mcp-docker-server/)
 [![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/pnmice/mcp-docker-server?sort=semver)](https://github.com/pnmice/mcp-docker-server/releases/latest)
 [![Build](https://github.com/pnmice/mcp-docker-server/actions/workflows/deploy.yml/badge.svg)](https://github.com/pnmice/mcp-docker-server/actions/workflows/deploy.yml)
+[![codecov](https://codecov.io/gh/pnmice/mcp-docker-server/branch/master/graph/badge.svg)](https://codecov.io/gh/pnmice/mcp-docker-server "Non-generated packages only")
 
 **Effortlessly orchestrate and oversee Docker environments from anywhere, using natural, conversational commands.**
 
