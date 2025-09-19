@@ -2,7 +2,7 @@
 Tests for input and output schemas.
 """
 
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import Mock
 
 import pytest
@@ -117,6 +117,91 @@ class TestInputSchemas:
             container_id="test", tail=100, grep=None, since=None, until=None
         )
         assert schema.tail == 100
+
+    def test_fetch_container_logs_input_literal_all(self) -> None:
+        """Test FetchContainerLogsInput with literal 'all'."""
+        schema = FetchContainerLogsInput(
+            container_id="test", tail="all", grep=None, since=None, until=None
+        )
+        assert schema.tail == "all"
+        assert isinstance(schema.tail, str)
+
+    def test_fetch_container_logs_input_json_encoded_all(self) -> None:
+        """Test FetchContainerLogsInput with JSON-encoded 'all'."""
+        schema = FetchContainerLogsInput(
+            container_id="test", tail='"all"', grep=None, since=None, until=None
+        )
+        assert schema.tail == "all"
+        assert isinstance(schema.tail, str)
+
+    def test_fetch_container_logs_input_json_encoded_integer(self) -> None:
+        """Test FetchContainerLogsInput with JSON-encoded integer."""
+        schema = FetchContainerLogsInput(
+            container_id="test", tail='"100"', grep=None, since=None, until=None
+        )
+        assert schema.tail == 100
+        assert isinstance(schema.tail, int)
+
+    def test_fetch_container_logs_input_string_integer(self) -> None:
+        """Test FetchContainerLogsInput with string integer."""
+        schema = FetchContainerLogsInput(
+            container_id="test", tail="50", grep=None, since=None, until=None
+        )
+        assert schema.tail == 50
+        assert isinstance(schema.tail, int)
+
+    def test_fetch_container_logs_input_invalid_literal(self) -> None:
+        """Test FetchContainerLogsInput with invalid literal value."""
+        with pytest.raises(ValidationError) as exc_info:
+            FetchContainerLogsInput(
+                container_id="test", tail="invalid", grep=None, since=None, until=None
+            )
+        errors = exc_info.value.errors()
+        assert len(errors) == 2  # Should fail both int and literal validation
+        assert "int_parsing" in errors[0]["type"]
+        assert "literal_error" in errors[1]["type"]
+
+    def test_fetch_container_logs_input_json_encoded_invalid_literal(self) -> None:
+        """Test FetchContainerLogsInput with JSON-encoded invalid literal."""
+        with pytest.raises(ValidationError) as exc_info:
+            FetchContainerLogsInput(
+                container_id="test", tail='"invalid"', grep=None, since=None, until=None
+            )
+        errors = exc_info.value.errors()
+        assert len(errors) == 2  # Should fail both int and literal validation
+        assert "int_parsing" in errors[0]["type"]
+        assert "literal_error" in errors[1]["type"]
+
+
+class TestHelperFunctions:
+    """Test helper functions for input validation."""
+
+    def test_has_literal_type_simple_literal(self) -> None:
+        """Test _has_literal_type with simple Literal type."""
+        from mcp_docker_server.input_schemas import _has_literal_type
+
+        assert _has_literal_type(Literal["all"]) is True
+
+    def test_has_literal_type_union_with_literal(self) -> None:
+        """Test _has_literal_type with Union containing Literal."""
+        from mcp_docker_server.input_schemas import _has_literal_type
+
+        assert _has_literal_type(int | Literal["all"]) is True
+
+    def test_has_literal_type_no_literal(self) -> None:
+        """Test _has_literal_type with non-Literal types."""
+        from mcp_docker_server.input_schemas import _has_literal_type
+
+        assert _has_literal_type(str) is False
+        assert _has_literal_type(int) is False
+        assert _has_literal_type(bool) is False
+
+    def test_has_literal_type_complex_union(self) -> None:
+        """Test _has_literal_type with complex Union types."""
+        from mcp_docker_server.input_schemas import _has_literal_type
+
+        assert _has_literal_type(str | int | Literal["test"]) is True
+        assert _has_literal_type(str | int | bool) is False
 
     def test_list_images_input_valid(self) -> None:
         """Test valid ListImagesInput."""

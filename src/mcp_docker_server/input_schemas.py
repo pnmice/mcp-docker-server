@@ -12,6 +12,45 @@ from pydantic import (
 )
 
 
+def _has_literal_type(field_type: Any) -> bool:
+    """Check if a type annotation contains a Literal type."""
+    origin = get_origin(field_type)
+    if origin is Literal:
+        return True
+    if origin is not None:  # Union, Optional, etc.
+        args = get_args(field_type)
+        return any(_has_literal_type(arg) for arg in args)
+    return False
+
+
+def _extract_non_none_type(field_type: Any) -> Any:
+    """Extract the non-None type from Union/Optional types."""
+    origin = get_origin(field_type)
+    if origin is not None:
+        args = get_args(field_type)
+        # Find the non-None type in case of Optional
+        return next((arg for arg in args if arg is not type(None)), field_type)
+    return field_type
+
+
+def _handle_literal_field_json(value: str) -> Any:
+    """Handle JSON parsing for fields with Literal types."""
+    try:
+        parsed = json.loads(value)
+        # Only return parsed value if it's a simple type (str, int, float, bool)
+        if isinstance(parsed, (str, int, float, bool)):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    # Return original value if JSON parsing fails or produces complex types
+    return value
+
+
+def _should_skip_json_parsing(field_type: Any) -> bool:
+    """Check if a field type should skip JSON parsing."""
+    return field_type in (str, int, float, bool, datetime)
+
+
 class JSONParsingModel(BaseModel):
     """
     A base Pydantic model that attempts to parse JSON strings for non-primitive fields.
@@ -35,19 +74,14 @@ class JSONParsingModel(BaseModel):
             return value
 
         field = fields[field_name]
-        field_type = field.annotation
+        field_type = _extract_non_none_type(field.annotation)
 
-        # Handle Optional/Union types
-        origin = get_origin(field_type)
-        if origin is not None:
-            args = get_args(field_type)
-            # Find the non-None type in case of Optional
-            field_type = next(
-                (arg for arg in args if arg is not type(None)), field_type
-            )
+        # Special handling for fields with Literal types
+        if _has_literal_type(field.annotation):
+            return _handle_literal_field_json(value)
 
         # Don't try to parse strings, numbers, or dates
-        if field_type in (str, int, float, bool, datetime):
+        if _should_skip_json_parsing(field_type):
             return value
 
         try:
@@ -71,6 +105,24 @@ class FetchContainerLogsInput(JSONParsingModel):
     until: str | None = Field(
         None,
         description="Show logs until timestamp (e.g. 2013-01-02T13:23:37Z) or relative (e.g. 42m for 42 minutes)",
+    )
+
+
+class AnalyzeContainerLogsInput(JSONParsingModel):
+    container_id: str = Field(..., description="Container ID or name")
+    tail: int | Literal["all"] = Field(
+        1000, description="Number of lines to analyze from the end"
+    )
+    since: str | None = Field(
+        None,
+        description="Show logs since timestamp (e.g. 2013-01-02T13:23:37Z) or relative (e.g. 42m for 42 minutes)",
+    )
+    until: str | None = Field(
+        None,
+        description="Show logs until timestamp (e.g. 2013-01-02T13:23:37Z) or relative (e.g. 42m for 42 minutes)",
+    )
+    include_patterns: bool = Field(
+        True, description="Include pattern analysis in results"
     )
 
 
