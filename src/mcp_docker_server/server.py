@@ -20,6 +20,7 @@ from mcp.server import Server
 from pydantic import AnyUrl, ValidationError
 
 from .input_schemas import (
+    AnalyzeContainerLogsInput,
     BuildImageInput,
     ContainerActionInput,
     CreateContainerInput,
@@ -41,6 +42,7 @@ from .input_schemas import (
     RemoveNetworkInput,
     RemoveVolumeInput,
 )
+from .log_analyzer import LogAnalyzer
 from .output_schemas import docker_to_dict
 from .settings import ServerSettings
 
@@ -313,6 +315,11 @@ async def list_tools() -> list[types.Tool]:
             name="fetch_container_logs",
             description="Fetch logs for a Docker container with optional filtering (grep-like search, time range)",
             inputSchema=FetchContainerLogsInput.model_json_schema(),
+        ),
+        types.Tool(
+            name="analyze_container_logs",
+            description="Analyze Docker container logs to filter noise and highlight important events (errors, warnings, business logic)",
+            inputSchema=AnalyzeContainerLogsInput.model_json_schema(),
         ),
         types.Tool(
             name="stop_container",
@@ -729,6 +736,10 @@ def _handle_container_tools(name: str, arguments: dict[str, Any]) -> Any | None:
         logs_args = FetchContainerLogsInput(**arguments)
         return _handle_fetch_container_logs(logs_args)
 
+    elif name == "analyze_container_logs":
+        analyze_args = AnalyzeContainerLogsInput(**arguments)
+        return _handle_analyze_container_logs(analyze_args)
+
     return None
 
 
@@ -752,6 +763,46 @@ def _handle_fetch_container_logs(logs_args: FetchContainerLogsInput) -> dict[str
         log_lines = [line for line in log_lines if pattern.search(line)]
 
     return {"logs": log_lines}
+
+
+def _handle_analyze_container_logs(
+    analyze_args: AnalyzeContainerLogsInput,
+) -> dict[str, Any]:
+    """Handle analyzing container logs to filter noise and highlight important events."""
+    container = _docker.containers.get(analyze_args.container_id)
+
+    # Prepare kwargs for container.logs()
+    logs_kwargs: dict[str, Any] = {"tail": analyze_args.tail}
+    if analyze_args.since:
+        logs_kwargs["since"] = analyze_args.since
+    if analyze_args.until:
+        logs_kwargs["until"] = analyze_args.until
+
+    logs = container.logs(**logs_kwargs).decode("utf-8")
+    log_lines = logs.split("\n")
+
+    # Initialize log analyzer and analyze logs
+    analyzer = LogAnalyzer()
+    analysis_results = analyzer.analyze_logs(log_lines)
+
+    # Format results for API response
+    formatted_results = analyzer.format_analysis_summary(analysis_results)
+
+    # Add container information
+    formatted_results["container_info"] = {
+        "id": container.short_id,
+        "name": container.name,
+        "status": container.status,
+    }
+
+    # Add metadata
+    formatted_results["analysis_metadata"] = {
+        "total_lines_analyzed": len(log_lines),
+        "lines_after_filtering": len(log_lines) - analysis_results["noise_filtered"],
+        "include_patterns": analyze_args.include_patterns,
+    }
+
+    return formatted_results
 
 
 def _format_images_bulk(images_data: list[dict[str, Any]]) -> list[dict[str, Any]]:

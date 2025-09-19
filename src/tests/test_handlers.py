@@ -258,6 +258,138 @@ class TestContainerHandlers:
         with pytest.raises(NotFound):
             _handle_container_tools("start_container", {"container_id": "nonexistent"})
 
+    def test_analyze_container_logs_success(
+        self, mock_docker_client: Mock, mock_container: Mock
+    ) -> None:
+        """Test successful container log analysis."""
+        # Mock realistic container logs
+        log_content = "\n".join(
+            [
+                "[2025-09-18T20:22:12Z DEBUG hyper::client::pool] pooling idle connection",
+                "[2025-09-18T20:22:12Z ERROR payment_service::api] Failed to set payment date: 400 Bad Request",
+                "[2025-09-18T20:22:12Z WARN billing_service::subscription] Failed to renew subscription for user 7405017107",
+                "[2025-09-18T20:22:12Z INFO billing_service::subscription] Subscription activated for user 123",
+                "[2025-09-18T20:22:12Z DEBUG hyper::proto::h1::io] parsed 9 headers",
+            ]
+        )
+
+        mock_container.logs.return_value = log_content.encode("utf-8")
+        mock_container.short_id = "abc123456"
+        mock_container.name = "test-container"
+        mock_container.status = "running"
+        mock_docker_client.containers.get.return_value = mock_container
+
+        result = _handle_container_tools(
+            "analyze_container_logs",
+            {"container_id": "test_id", "tail": 1000, "include_patterns": True},
+        )
+
+        assert result is not None
+        assert "summary" in result
+        assert "errors" in result
+        assert "warnings" in result
+        assert "business_events" in result
+        assert "container_info" in result
+        assert "analysis_metadata" in result
+
+        # Check summary counts
+        summary = result["summary"]
+        assert summary["noise_patterns_filtered"] == 2  # 2 DEBUG hyper logs
+        assert summary["errors_found"] == 1
+        assert summary["warnings_found"] == 1
+        assert summary["business_events_found"] >= 1  # Should find subscription events
+
+        # Check actual content
+        assert len(result["errors"]) == 1
+        assert len(result["warnings"]) == 1
+        assert "Failed to set payment date" in result["errors"][0]
+        assert "Failed to renew subscription" in result["warnings"][0]
+
+        # Check container info
+        assert result["container_info"]["id"] == "abc123456"
+        assert result["container_info"]["name"] == "test-container"
+        assert result["container_info"]["status"] == "running"
+
+        # Check metadata
+        assert result["analysis_metadata"]["total_lines_analyzed"] == 5
+        assert result["analysis_metadata"]["lines_after_filtering"] == 3
+        assert result["analysis_metadata"]["include_patterns"] is True
+
+    def test_analyze_container_logs_with_time_filters(
+        self, mock_docker_client: Mock, mock_container: Mock
+    ) -> None:
+        """Test container log analysis with time range filters."""
+        mock_container.logs.return_value = b"ERROR Test error"
+        mock_container.short_id = "abc123"
+        mock_container.name = "test-container"
+        mock_container.status = "running"
+        mock_docker_client.containers.get.return_value = mock_container
+
+        result = _handle_container_tools(
+            "analyze_container_logs",
+            {
+                "container_id": "test_id",
+                "tail": 500,
+                "since": "1h",
+                "until": "now",
+                "include_patterns": False,
+            },
+        )
+
+        assert result is not None
+        # Verify logs() was called with correct parameters
+        mock_container.logs.assert_called_once_with(tail=500, since="1h", until="now")
+
+    def test_analyze_container_logs_empty_logs(
+        self, mock_docker_client: Mock, mock_container: Mock
+    ) -> None:
+        """Test container log analysis with empty logs."""
+        mock_container.logs.return_value = b""
+        mock_container.short_id = "abc123"
+        mock_container.name = "test-container"
+        mock_container.status = "running"
+        mock_docker_client.containers.get.return_value = mock_container
+
+        result = _handle_container_tools(
+            "analyze_container_logs", {"container_id": "test_id"}
+        )
+
+        assert result is not None
+        assert result["summary"]["errors_found"] == 0
+        assert result["summary"]["warnings_found"] == 0
+        assert result["summary"]["noise_patterns_filtered"] == 0
+        assert len(result["errors"]) == 0
+        assert len(result["warnings"]) == 0
+
+    def test_analyze_container_logs_only_noise(
+        self, mock_docker_client: Mock, mock_container: Mock
+    ) -> None:
+        """Test container log analysis with only noise patterns."""
+        log_content = "\n".join(
+            [
+                "DEBUG hyper::client::pool] pooling idle connection",
+                "DEBUG hyper::proto::h1::io] parsed 9 headers",
+                "DEBUG hyper::proto::h1::conn] incoming body is content-length (23 bytes)",
+                "DEBUG hyper::proto::h1::conn] incoming body completed",
+            ]
+        )
+
+        mock_container.logs.return_value = log_content.encode("utf-8")
+        mock_container.short_id = "abc123"
+        mock_container.name = "test-container"
+        mock_container.status = "running"
+        mock_docker_client.containers.get.return_value = mock_container
+
+        result = _handle_container_tools(
+            "analyze_container_logs", {"container_id": "test_id"}
+        )
+
+        assert result is not None
+        assert result["summary"]["noise_patterns_filtered"] == 4
+        assert result["summary"]["errors_found"] == 0
+        assert result["summary"]["warnings_found"] == 0
+        assert result["analysis_metadata"]["lines_after_filtering"] == 0
+
     def test_unknown_container_tool(self) -> None:
         """Test handling of unknown container tool."""
         result = _handle_container_tools("unknown_tool", {})
